@@ -57,6 +57,22 @@ class User(AbstractUser):
         return self.email
 
 
+class NewsletterSubscription(models.Model):
+    """An explicitly consented email address for OFFDAY updates."""
+
+    email = models.EmailField(max_length=254, unique=True)
+    is_active = models.BooleanField(default=True)
+    consented_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return self.email
+
+
 class Category(models.Model):
 
     name = models.CharField(max_length=100,unique=True)

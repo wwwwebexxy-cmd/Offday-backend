@@ -4,6 +4,7 @@ from .views import ThrottledTokenRefreshView
 
 urlpatterns = [
     path("health/", views.health_check),
+    path("newsletter/", views.newsletter_signup, name="newsletter-signup"),
     path("auth/csrf/", views.csrf_token, name="auth_csrf"),
     path("auth/session/", views.auth_session, name="auth_session"),
     path("register/",views.register),

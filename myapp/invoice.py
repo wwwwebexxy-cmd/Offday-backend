@@ -23,11 +23,11 @@ VAT_RATE = Decimal("0.05")
 PAGE_WIDTH, BASE_PAGE_HEIGHT = portrait((216 * mm, 303 * mm))
 INK = HexColor("#111111")
 MUTED = HexColor("#424242")
-ORANGE = HexColor("#ff9000")
+LIME = HexColor("#c6f135")
 SLATE = HexColor("#4f6973")
-LIGHT_ORANGE = HexColor("#fff4e5")
+LIGHT_ORANGE = HexColor("#f4f9df")
 TABLE_LINE = HexColor("#222222")
-LIFE_LINE_LOGO_PATH = Path(__file__).with_name("assets") / "lifeline-medical-supplies-logo.jpeg"
+OFFDAY_LOGO_PATH = Path(__file__).with_name("assets") / "offday-logo.png"
 MARGIN = 48
 CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
 
@@ -48,11 +48,11 @@ def _money_text(value):
 
 
 def _invoice_number(order):
-    return f"INV-LL26-{order.pk:04d}"
+    return f"ODC-INV-{order.pk:06d}"
 
 
 def _order_number(order):
-    return f"LL26/{order.pk:04d}"
+    return f"ODC-{order.pk:06d}"
 
 
 def _full_name(order):
@@ -85,11 +85,10 @@ def _address_lines(address):
 
 
 def _draw_logo(pdf, x, y, scale=1):
-    if LIFE_LINE_LOGO_PATH.is_file():
-        image = ImageReader(str(LIFE_LINE_LOGO_PATH))
+    if OFFDAY_LOGO_PATH.is_file():
+        image = ImageReader(str(OFFDAY_LOGO_PATH))
         image_width, image_height = image.getSize()
-        # The supplied Lifeline wordmark is a wide image. Fit it inside the
-        # invoice header without cropping the medical-supplies descriptor.
+        # Fit the supplied OFFDAY wordmark inside the invoice header.
         box_width = 145 * scale
         box_height = 46 * scale
         image_scale = min(box_width / image_width, box_height / image_height)
@@ -111,16 +110,11 @@ def _draw_logo(pdf, x, y, scale=1):
     # Keep the vector fallback for older deployments where the bundled asset
     # has not been installed yet.
     pdf.saveState()
-    pdf.setFillColor(ORANGE)
-    pdf.rect(x + 27 * scale, y + 47 * scale, 25 * scale, 25 * scale, fill=1, stroke=0)
-    pdf.rect(x + 15 * scale, y + 55 * scale, 17 * scale, 7 * scale, fill=1, stroke=0)
-    pdf.rect(x + 15 * scale, y + 42 * scale, 17 * scale, 7 * scale, fill=1, stroke=0)
-    pdf.setFillColor(SLATE)
-    pdf.setFont("Helvetica-Bold", 19 * scale)
-    pdf.drawString(x + 3 * scale, y + 22 * scale, "Lifeline")
-    pdf.setFillColor(ORANGE)
-    pdf.setFont("Helvetica", 6 * scale)
-    pdf.drawRightString(x + 73 * scale, y + 13 * scale, "Medical Supplies")
+    pdf.setFillColor(LIME)
+    pdf.roundRect(x, y + 13 * scale, 120 * scale, 34 * scale, 3 * scale, fill=1, stroke=0)
+    pdf.setFillColor(black)
+    pdf.setFont("Helvetica-Bold", 18 * scale)
+    pdf.drawCentredString(x + 60 * scale, y + 23 * scale, "OFFDAY")
     pdf.restoreState()
 
 
@@ -352,15 +346,17 @@ def _draw_summary(pdf, order, page_height, rows):
     pdf.setFillColor(MUTED)
     pdf.setFont("Helvetica", 7.2)
     method = _clean(order.get_payment_method_display() if hasattr(order, "get_payment_method_display") else order.payment_method)
-    brand_name = _clean(getattr(settings, "BRAND_NAME", "Lifeline Medical Supplies"), "Lifeline Medical Supplies")
-    brand_phone = _clean(getattr(settings, "BRAND_PHONE", "+971 56 263 7379"), "+971 56 263 7379")
-    site_url = _clean(getattr(settings, "SITE_URL", "https://www.lifelinemedsup.com"), "https://www.lifelinemedsup.com")
+    brand_name = _clean(getattr(settings, "BRAND_NAME", "OFFDAY Collections"), "OFFDAY Collections")
+    brand_phone = _clean(getattr(settings, "BRAND_PHONE", ""), "")
+    site_url = _clean(getattr(settings, "SITE_URL", ""), "")
     pdf.drawString(left_x, note_y, f"This invoice amount has been paid by {method}")
     pdf.drawString(left_x, note_y - 19, f"Thank you for shopping with {brand_name}.")
     pdf.drawString(left_x, note_y - 42, "If you have any questions regarding this invoice or the goods")
     pdf.drawString(left_x, note_y - 53, "delivered, please contact our Customer Service Department.")
-    pdf.drawString(left_x, note_y - 76, f"Phone: {brand_phone}")
-    pdf.drawString(left_x, note_y - 87, f"Web: {site_url}")
+    if brand_phone:
+        pdf.drawString(left_x, note_y - 76, f"Phone: {brand_phone}")
+    if site_url:
+        pdf.drawString(left_x, note_y - 87, f"Web: {site_url}")
 
 
 def _draw_social_icon(pdf, platform, x, y, size):
@@ -428,9 +424,10 @@ def _draw_footer(pdf, page_height):
 
     pdf.setFillColor(HexColor("#303047"))
     pdf.setFont("Helvetica", 8)
-    brand_name = _clean(getattr(settings, "BRAND_NAME", "Lifeline Medical Supplies"), "Lifeline Medical Supplies")
-    site_url = _clean(getattr(settings, "SITE_URL", "https://www.lifelinemedsup.com"), "https://www.lifelinemedsup.com")
-    pdf.drawCentredString(center, y - 22, f"Visit {brand_name} online: {site_url}")
+    brand_name = _clean(getattr(settings, "BRAND_NAME", "OFFDAY Collections"), "OFFDAY Collections")
+    site_url = _clean(getattr(settings, "SITE_URL", ""), "")
+    footer_text = f"Visit {brand_name} online: {site_url}" if site_url else brand_name
+    pdf.drawCentredString(center, y - 22, footer_text)
 
 
 def render_tax_invoice(order):
@@ -454,12 +451,12 @@ def render_tax_invoice(order):
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica-Bold", 20)
     pdf.drawString(MARGIN, top - 18, "Tax Invoice")
-    seller_name = getattr(settings, "INVOICE_SELLER_NAME", "Lifeline Medical Supplies")
+    seller_name = getattr(settings, "INVOICE_SELLER_NAME", "OFFDAY Collections")
     seller_lines = [
         seller_name,
         getattr(settings, "INVOICE_SELLER_ADDRESS", ""),
         getattr(settings, "INVOICE_SELLER_CITY", ""),
-        getattr(settings, "INVOICE_SELLER_COUNTRY", "United Arab Emirates"),
+        getattr(settings, "INVOICE_SELLER_COUNTRY", ""),
     ]
     seller_vat = str(getattr(settings, "INVOICE_SELLER_VAT_NUMBER", "") or "").strip()
     if seller_vat:
@@ -475,7 +472,7 @@ def render_tax_invoice(order):
     invoice_date = localtime(order.created_at).strftime("%d.%m.%Y") if order.created_at else "-"
     left_y = top - 177
     _draw_label_value(pdf, "Tax Invoice Number", _invoice_number(order), MARGIN, left_y, MARGIN + 125)
-    brand_short_name = _clean(getattr(settings, "BRAND_SHORT_NAME", "Lifeline"), "Lifeline")
+    brand_short_name = _clean(getattr(settings, "BRAND_SHORT_NAME", "OFFDAY"), "OFFDAY")
     _draw_label_value(pdf, f"{brand_short_name} Order Number", _order_number(order), MARGIN, left_y - 17, MARGIN + 125)
     _draw_label_value(pdf, "Invoice Date", invoice_date, MARGIN, left_y - 34, MARGIN + 125)
     _draw_label_value(pdf, "Due Date", invoice_date, MARGIN, left_y - 51, MARGIN + 125)

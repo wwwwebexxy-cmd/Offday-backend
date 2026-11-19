@@ -120,6 +120,19 @@ class ResetPasswordSerializer( serializers.Serializer):
 
         return data
     
+class NewsletterSignupSerializer(serializers.Serializer):
+    email = serializers.EmailField(max_length=254)
+    consent = serializers.BooleanField(required=True)
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+    def validate_consent(self, value):
+        if not value:
+            raise serializers.ValidationError("Confirm that you want to receive OFFDAY updates.")
+        return value
+
+
 class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:

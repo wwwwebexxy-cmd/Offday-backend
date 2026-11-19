@@ -1,7 +1,6 @@
 """Email notifications for newly paid orders.
 
-The SMTP settings are provider-agnostic, so Mailtrap Sandbox and Mailtrap
-Email Sending can be used without putting provider credentials in the code.
+The notification sender uses the project's configured SMTP settings.
 Notification delivery is deliberately best-effort: an SMTP outage must not
 roll back an already-paid order.
 """

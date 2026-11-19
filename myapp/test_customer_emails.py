@@ -31,12 +31,12 @@ from .models import (
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
     DEFAULT_FROM_EMAIL="no-reply@example.test",
     SITE_URL="https://shop.example.test",
-    BRAND_NAME="Lifeline Medical Supplies",
-    BRAND_SHORT_NAME="Lifeline",
-    BRAND_SUPPORT_EMAIL="lifeandline@gmail.com",
-    BRAND_PHONE="+971 56 263 7379",
-    BRAND_COUNTRY="United Arab Emirates",
-    BRAND_TAGLINE="Medical Supplies",
+    BRAND_NAME="OFFDAY Collections",
+    BRAND_SHORT_NAME="OFFDAY",
+    BRAND_SUPPORT_EMAIL="support@offday.example",
+    BRAND_PHONE="+1 555-0100",
+    BRAND_COUNTRY="Example Country",
+    BRAND_TAGLINE="Elevated everyday streetwear",
 )
 class CustomerEmailTests(TestCase):
     def setUp(self):
@@ -69,13 +69,13 @@ class CustomerEmailTests(TestCase):
         self.assertTrue(send_registration_email(user.id))
         self.assertEqual(len(mail.outbox), 1)
         message = mail.outbox[0]
-        self.assertIn("Welcome to Lifeline Medical Supplies", message.subject)
+        self.assertIn("Welcome to OFFDAY Collections", message.subject)
         self.assertIn("New Customer", message.body)
         self.assertIn(assignment.code, message.body)
         html = message.alternatives[0][0]
-        self.assertIn("Lifeline Medical Supplies", html)
-        self.assertIn("lifeandline@gmail.com", html)
-        self.assertIn("+971 56 263 7379", html)
+        self.assertIn("OFFDAY Collections", html)
+        self.assertIn("support@offday.example", html)
+        self.assertIn("+1 555-0100", html)
         self.assertNotIn("Seriously Different", html)
         self.assertNotIn("support@example.invalid", html)
         self.assertIsNotNone(User.objects.get(pk=user.pk).registration_email_sent_at)
@@ -146,17 +146,17 @@ class CustomerEmailTests(TestCase):
         self.assertIn("AED 50.00 off", message.body)
         self.assertIn(product.name, message.body)
         self.assertNotIn(expired_assignment.code, message.body)
-        self.assertIn("cid:life-line-logo", html)
+        self.assertIn("cid:offday-logo", html)
         self.assertIn(product.name, html)
         self.assertNotIn("instagram.com", html)
-        self.assertIn("Member offers", html)
-        self.assertLess(html.index("YOUR WELCOME GIFT"), html.index("Member offers"))
+        self.assertIn("New drops", html)
+        self.assertLess(html.index("YOUR WELCOME GIFT"), html.index("New drops"))
         self.assertNotIn("coupon", message.body.lower())
         self.assertNotIn("offer", message.body.lower())
         self.assertNotIn(expired_assignment.code, html)
         self.assertTrue(
             any(
-                part.get("Content-ID") == "<life-line-logo>"
+                part.get("Content-ID") == "<offday-logo>"
                 for part in message.message().walk()
             )
         )
@@ -234,16 +234,16 @@ class CustomerEmailTests(TestCase):
         self.assertIn("SHIPPING TO", html)
         self.assertIn("PAYMENT", html)
         self.assertIn("VIEW MY ORDER", html)
-        self.assertIn("cid:life-line-logo", html)
-        self.assertIn("Lifeline Medical Supplies", html)
-        self.assertIn("lifeandline@gmail.com", html)
-        self.assertIn("+971 56 263 7379", html)
+        self.assertIn("cid:offday-logo", html)
+        self.assertIn("OFFDAY Collections", html)
+        self.assertIn("support@offday.example", html)
+        self.assertIn("+1 555-0100", html)
         self.assertNotIn("Seriously Different", html)
         self.assertNotIn("Configured location", html)
         self.assertNotIn("support@example.invalid", html)
         self.assertTrue(
             any(
-                part.get("Content-ID") == "<life-line-logo>"
+                part.get("Content-ID") == "<offday-logo>"
                 for part in message.message().walk()
             )
         )
@@ -281,10 +281,10 @@ class CustomerEmailTests(TestCase):
         self.assertIn("WHERE&apos;S MY ORDER?", html)
         self.assertIn("Buy More", html)
         self.assertIn("My Account", html)
-        self.assertIn("cid:life-line-logo", html)
-        self.assertIn("Lifeline Medical Supplies", html)
-        self.assertIn("lifeandline@gmail.com", html)
-        self.assertIn("+971 56 263 7379", html)
+        self.assertIn("cid:offday-logo", html)
+        self.assertIn("OFFDAY Collections", html)
+        self.assertIn("support@offday.example", html)
+        self.assertIn("+1 555-0100", html)
         self.assertNotIn("Seriously Different", html)
         self.assertNotIn("Configured location", html)
         self.assertNotIn("support@example.invalid", html)
@@ -302,7 +302,7 @@ class CustomerEmailTests(TestCase):
         self.assertTrue(attachment[1].startswith(b"%PDF"))
         self.assertTrue(
             any(
-                part.get("Content-ID") == "<life-line-logo>"
+                part.get("Content-ID") == "<offday-logo>"
                 for part in message.message().walk()
             )
         )

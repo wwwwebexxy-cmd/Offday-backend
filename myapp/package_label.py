@@ -20,9 +20,9 @@ from .sku import resolve_order_item_sku
 
 
 PAGE_WIDTH, BASE_PAGE_HEIGHT = landscape(A6)
-ORANGE = HexColor("#ff9000")
+LIME = HexColor("#c6f135")
 INK = HexColor("#111111")
-PACKAGE_LOGO_PATH = Path(__file__).with_name("assets") / "lifeline-medical-supplies-logo.jpeg"
+PACKAGE_LOGO_PATH = Path(__file__).with_name("assets") / "offday-logo.png"
 
 
 def _clean(value, fallback="—"):
@@ -164,24 +164,17 @@ def _draw_logo(pdf, x, y, width=72, height=62):
         )
         return
 
-    # Keep a small fallback for environments where the bundled image is not
-    # present yet (for example, an older deployment during a rolling update).
-    scale = min(width / 78, height / 70)
-    pdf.setFillColor(ORANGE)
-    pdf.rect(x + 27 * scale, y + 47 * scale, 25 * scale, 25 * scale, fill=1, stroke=0)
-    pdf.rect(x + 15 * scale, y + 55 * scale, 17 * scale, 7 * scale, fill=1, stroke=0)
-    pdf.rect(x + 15 * scale, y + 42 * scale, 17 * scale, 7 * scale, fill=1, stroke=0)
-    pdf.setFillColor(HexColor("#4f6973"))
-    pdf.setFont("Helvetica-Bold", 19 * scale)
-    pdf.drawString(x + 3 * scale, y + 22 * scale, "Lifeline")
-    pdf.setFillColor(ORANGE)
-    pdf.setFont("Helvetica", 6 * scale)
-    pdf.drawRightString(x + 73 * scale, y + 13 * scale, "Medical Supplies")
+    scale = min(width / 90, height / 48)
+    pdf.setFillColor(LIME)
+    pdf.roundRect(x, y + 10 * scale, 90 * scale, 35 * scale, 3 * scale, fill=1, stroke=0)
+    pdf.setFillColor(INK)
+    pdf.setFont("Helvetica-Bold", 14 * scale)
+    pdf.drawCentredString(x + 45 * scale, y + 22 * scale, "OFFDAY")
 
 
 def _draw_barcode(pdf, value, x, y, width_limit, height, bar_width=0.8, human=True):
     barcode = code128.Code128(
-        _clean(value, "LL26-0001").replace("—", "-")[:40],
+        _clean(value, "ODC-000001").replace("—", "-")[:40],
         barHeight=height,
         barWidth=bar_width,
         humanReadable=human,
@@ -223,7 +216,7 @@ def render_package_label(order):
 
     items = list(order.items.all())
     contexts = [_item_context(item) for item in items]
-    order_number = f"LL26/{order.pk:04d}"
+    order_number = f"ODC-{order.pk:06d}"
     package_code = order_number.replace("/", "-")
     address = order.address
     customer_name = _full_name(order)
@@ -328,7 +321,7 @@ def render_package_label(order):
     x = ship_to_column_right + 10
     y = _draw_section_header(pdf, "SHIP FROM", x, top - 17, 140)
     pdf.setFont("Helvetica", 8.5)
-    seller_name = str(getattr(settings, "INVOICE_SELLER_NAME", "Lifeline Medical Supplies") or "Lifeline Medical Supplies").strip()
+    seller_name = str(getattr(settings, "INVOICE_SELLER_NAME", "OFFDAY Collections") or "OFFDAY Collections").strip()
     seller_address = str(getattr(settings, "INVOICE_SELLER_ADDRESS", "") or "").strip()
     seller_city = str(getattr(settings, "INVOICE_SELLER_CITY", "") or "").strip()
     seller_country = str(getattr(settings, "INVOICE_SELLER_COUNTRY", "United Arab Emirates") or "United Arab Emirates").strip()
@@ -373,7 +366,7 @@ def render_package_label(order):
     if delivery_values:
         offer_text = f"{offer_text} · {_truncate(delivery_values[0], 18)}"
     pdf.setFillColor(HexColor("#fff0d8"))
-    pdf.setStrokeColor(ORANGE)
+    pdf.setStrokeColor(LIME)
     pdf.roundRect(x, y - 18, 205, 22, 4, fill=1, stroke=1)
     pdf.setFillColor(INK)
     pdf.setFont("Helvetica-Bold", 7.5)

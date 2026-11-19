@@ -87,8 +87,37 @@ from .invoice import render_tax_invoice
 logger = logging.getLogger(__name__)
 
 
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def newsletter_signup(request):
+    serializer = NewsletterSignupSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {
+                "detail": "Enter a valid email address and confirm the signup.",
+                "errors": serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    email = serializer.validated_data["email"]
+    subscription, created = NewsletterSubscription.objects.get_or_create(email=email)
+    if not created and not subscription.is_active:
+        subscription.is_active = True
+        subscription.consented_at = timezone.now()
+        subscription.save(update_fields=("is_active", "consented_at", "updated_at"))
+
+    return Response(
+        {
+            "detail": "Your address is saved for OFFDAY updates. Newsletter email delivery is not configured yet.",
+            "created": created,
+        },
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
 def _invoice_filename(order):
-    return f"LL26-{order.pk:04d}-tax-invoice.pdf"
+    return f"ODC-{order.pk:06d}-tax-invoice.pdf"
 
 
 class PublicProductPagination(PageNumberPagination):
@@ -443,10 +472,10 @@ def forgot_password(request):
             else:
                 try:
                     send_mail(
-                        subject="Reset your life-line password",
+                        subject="Reset your OFFDAY Collections password",
                         message=f"""Hello {user.first_name or 'there'},
 
-Use the link below to reset your life-line password. This link expires according to the server's password-reset policy and can only be used once.
+Use the link below to reset your OFFDAY Collections password. This link expires according to the server's password-reset policy and can only be used once.
 
 {reset_link}
 
@@ -456,7 +485,7 @@ If you did not request this, you can ignore this email.
                         recipient_list=[user.email],
                         html_message=f"""
 <p>Hello {greeting_name},</p>
-<p>Use the button below to reset your life-line password. This link expires according to the server's password-reset policy and can only be used once.</p>
+<p>Use the button below to reset your OFFDAY Collections password. This link expires according to the server's password-reset policy and can only be used once.</p>
 <p><a href="{escaped_reset_link}">Reset Password</a></p>
 <p>If you did not request this, you can ignore this email.</p>
 """,

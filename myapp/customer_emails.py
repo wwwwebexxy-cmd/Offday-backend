@@ -22,7 +22,7 @@ from .sku import resolve_order_item_sku
 
 logger = logging.getLogger(__name__)
 
-EMAIL_LOGO_PATH = Path(__file__).with_name("assets") / "lifeline-medical-supplies-logo.jpeg"
+EMAIL_LOGO_PATH = Path(__file__).with_name("assets") / "offday-logo.png"
 SOCIAL_LINKS = ()
 
 
@@ -32,31 +32,63 @@ def _brand_value(name, fallback):
 
 
 def _brand_name():
-    return _brand_value("BRAND_NAME", "Lifeline Medical Supplies")
+    return _brand_value("BRAND_NAME", "OFFDAY Collections")
 
 
 def _brand_short_name():
-    return _brand_value("BRAND_SHORT_NAME", "Lifeline")
+    return _brand_value("BRAND_SHORT_NAME", "OFFDAY")
 
 
 def _brand_support_email():
-    return _brand_value("BRAND_SUPPORT_EMAIL", "lifeandline@gmail.com")
+    return _brand_value("BRAND_SUPPORT_EMAIL", "")
 
 
 def _brand_phone():
-    return _brand_value("BRAND_PHONE", "+971 56 263 7379")
+    return _brand_value("BRAND_PHONE", "")
 
 
 def _brand_country():
-    return _brand_value("BRAND_COUNTRY", "United Arab Emirates")
+    return _brand_value("BRAND_COUNTRY", "")
 
 
 def _brand_tagline():
-    return _brand_value("BRAND_TAGLINE", "Medical Supplies")
+    return _brand_value("BRAND_TAGLINE", "Elevated everyday streetwear")
 
 
 def _site_url(path=""):
     return f"{str(getattr(settings, 'SITE_URL', '')).rstrip('/')}/{path.lstrip('/')}"
+
+
+def _brand_contact_text():
+    contacts = [value for value in (_brand_support_email(), _brand_phone()) if value]
+    return f"Need help? {' | '.join(contacts)}" if contacts else ""
+
+
+def _brand_contact_html():
+    contacts = []
+    email = _brand_support_email()
+    phone = _brand_phone()
+    if email:
+        escaped_email = escape(email)
+        contacts.append(f'<a href="mailto:{escaped_email}" style="color:#c6f135;text-decoration:none">{escaped_email}</a>')
+    if phone:
+        escaped_phone = escape(phone)
+        phone_href = escape("".join(character for character in phone if character.isdigit() or character == "+"))
+        contacts.append(f'<a href="tel:{phone_href}" style="color:#c6f135;text-decoration:none">{escaped_phone}</a>')
+    if not contacts:
+        return ""
+    return f'<div style="padding-top:8px;color:#d8e0e3;font-size:11px">Questions? {" or ".join(contacts)}</div>'
+
+
+def _brand_footer_details(site_url=""):
+    details = [escape(_brand_name())]
+    country = _brand_country()
+    if country:
+        details.append(escape(country))
+    if site_url:
+        escaped_url = escape(site_url)
+        details.append(f'<a href="{escaped_url}" style="color:#ffffff;text-decoration:none">Visit our website</a>')
+    return " · ".join(details)
 
 
 def _name(user, address=None):
@@ -271,16 +303,21 @@ def _invoice_status_steps(order):
 def _email_shell(title, content):
     brand_name = escape(_brand_name())
     brand_tagline = escape(_brand_tagline())
-    support_email = escape(_brand_support_email())
+    support_footer = _brand_contact_text()
+    footer_row = (
+        f'<tr><td style="padding:18px 30px;background:#faf9f4;border-top:1px solid #d6d4ca;color:#686860;font-size:12px">{escape(support_footer)}</td></tr>'
+        if support_footer
+        else ""
+    )
     return f"""
-    <div style=\"margin:0;background:#f8faf8;padding:28px 12px;font-family:Arial,Helvetica,sans-serif;color:#304a54\">
-      <table role=\"presentation\" style=\"width:100%;max-width:680px;margin:0 auto;background:#fff;border:1px solid #e2e8e4;border-radius:14px;border-collapse:separate;overflow:hidden\">
-        <tr><td style=\"padding:24px 30px;border-bottom:1px solid #e2e8e4\">
-          <div style=\"font-size:28px;font-weight:800;letter-spacing:-1px;color:#4f6973\">{brand_name}</div>
-          <div style=\"margin-top:3px;color:#ff9000;font-size:11px;font-style:italic\">{brand_tagline}</div>
+    <div style=\"margin:0;background:#f1f0e9;padding:28px 12px;font-family:Arial,Helvetica,sans-serif;color:#111111\">
+      <table role=\"presentation\" style=\"width:100%;max-width:680px;margin:0 auto;background:#fff;border:1px solid #d6d4ca;border-radius:14px;border-collapse:separate;overflow:hidden\">
+        <tr><td style=\"padding:24px 30px;border-bottom:1px solid #d6d4ca\">
+          <div style=\"font-size:28px;font-weight:800;letter-spacing:-1px;color:#111111\">{brand_name}</div>
+          <div style=\"margin-top:3px;color:#c6f135;font-size:11px;font-style:italic\">{brand_tagline}</div>
         </td></tr>
         <tr><td style=\"padding:30px\"><h1 style=\"margin:0 0 18px;color:#111;font-size:26px\">{title}</h1>{content}</td></tr>
-        <tr><td style=\"padding:18px 30px;background:#fafcfa;border-top:1px solid #e2e8e4;color:#71858d;font-size:12px\">Need help? Email <a href=\"mailto:{support_email}\" style=\"color:#d97f00\">{support_email}</a>.</td></tr>
+        {footer_row}
       </table>
     </div>
     """
@@ -363,19 +400,19 @@ def _welcome_gift_html(assignments):
         discount, scope, valid_until = _welcome_bonus_copy(assignment)
         entries.append(
             f"""
-            <div style=\"padding:12px 0;border-top:1px dashed #f0bd68\">
-              <div style=\"font-size:24px;line-height:1.15;color:#17364b;font-weight:800;letter-spacing:.3px\">{escape(assignment.code)}</div>
-              <div style=\"margin-top:5px;color:#304a54;font-size:15px;line-height:1.45\"><strong>{escape(discount)}</strong> on your first eligible order.</div>
-              <div style=\"margin-top:4px;color:#71858d;font-size:12px;line-height:1.45\">Valid on: {escape(scope)}</div>
-              <div style=\"margin-top:3px;color:#71858d;font-size:12px;line-height:1.45\">Valid until: {escape(valid_until)}</div>
+            <div style=\"padding:12px 0;border-top:1px dashed #c6f135\">
+              <div style=\"font-size:24px;line-height:1.15;color:#111111;font-weight:800;letter-spacing:.3px\">{escape(assignment.code)}</div>
+              <div style=\"margin-top:5px;color:#111111;font-size:15px;line-height:1.45\"><strong>{escape(discount)}</strong> on your first eligible order.</div>
+              <div style=\"margin-top:4px;color:#686860;font-size:12px;line-height:1.45\">Valid on: {escape(scope)}</div>
+              <div style=\"margin-top:3px;color:#686860;font-size:12px;line-height:1.45\">Valid until: {escape(valid_until)}</div>
             </div>
             """
         )
     return f"""
-      <div style=\"margin:26px 0;padding:18px 20px;border:1px dashed #e79a27;border-radius:8px;background:#fffaf0\">
-        <div style=\"margin-bottom:4px;font-size:12px;color:#a46a13;font-weight:800;letter-spacing:1.2px\">YOUR WELCOME GIFT</div>
+      <div style=\"margin:26px 0;padding:18px 20px;border:1px dashed #e79a27;border-radius:8px;background:#f1f0e9\">
+        <div style=\"margin-bottom:4px;font-size:12px;color:#111111;font-weight:800;letter-spacing:1.2px\">YOUR WELCOME GIFT</div>
         {''.join(entries)}
-        <div style=\"margin-top:8px;color:#71858d;font-size:12px;line-height:1.45\">Use the code at checkout while the campaign is active.</div>
+        <div style=\"margin-top:8px;color:#686860;font-size:12px;line-height:1.45\">Use the code at checkout while the campaign is active.</div>
       </div>
     """
 
@@ -405,9 +442,7 @@ def _social_links_html():
 def _registration_email_html(name, gift_html):
     site_url = escape(_site_url("/"))
     brand_name = escape(_brand_name())
-    brand_support_email = escape(_brand_support_email())
-    brand_phone = escape(_brand_phone())
-    brand_country = escape(_brand_country())
+    footer_details_html = _brand_footer_details(_site_url("/"))
     return f"""
     <!doctype html>
     <html lang=\"en\">
@@ -417,41 +452,41 @@ def _registration_email_html(name, gift_html):
         <title>Welcome to {brand_name}</title>
         <style>
           @media screen and (max-width: 620px) {{
-            .life-line-email-shell {{ padding: 10px !important; }}
-            .life-line-email-card {{ width: 100% !important; }}
-            .life-line-email-body {{ padding: 28px 20px !important; }}
-            .life-line-feature-cell {{ display: block !important; width: 100% !important; padding: 8px 0 !important; }}
+            .offday-email-shell {{ padding: 10px !important; }}
+            .offday-email-card {{ width: 100% !important; }}
+            .offday-email-body {{ padding: 28px 20px !important; }}
+            .offday-feature-cell {{ display: block !important; width: 100% !important; padding: 8px 0 !important; }}
           }}
         </style>
       </head>
-      <body style=\"margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54\">
-        <div class=\"life-line-email-shell\" style=\"padding:28px 12px;background:#f4f0e6\">
-          <table role=\"presentation\" class=\"life-line-email-card\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden\">
+      <body style=\"margin:0;padding:0;background:#f1f0e9;font-family:Arial,Helvetica,sans-serif;color:#111111\">
+        <div class=\"offday-email-shell\" style=\"padding:28px 12px;background:#f1f0e9\">
+          <table role=\"presentation\" class=\"offday-email-card\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #c6f135;border-radius:8px;overflow:hidden\">
             <tr>
               <td style=\"padding:28px 30px 18px;text-align:right\">
-                <a href=\"{site_url}\" style=\"text-decoration:none\"><img src=\"cid:life-line-logo\" width=\"165\" alt=\"{brand_name} logo\" style=\"display:inline-block;width:165px;max-width:70%;height:auto;border:0\"></a>
+                <a href=\"{site_url}\" style=\"text-decoration:none\"><img src=\"cid:offday-logo\" width=\"165\" alt=\"{brand_name} logo\" style=\"display:inline-block;width:165px;max-width:70%;height:auto;border:0\"></a>
               </td>
             </tr>
             <tr>
-              <td class=\"life-line-email-body\" style=\"padding:8px 50px 34px\">
+              <td class=\"offday-email-body\" style=\"padding:8px 50px 34px\">
                 <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">
-                  <tr><td style=\"font-size:12px;line-height:1.4;color:#ff9000;font-weight:800;letter-spacing:.8px\">WELCOME TO <span style=\"color:#38586a\">{brand_name}</span> <a href=\"{escape(_site_url('/login'))}\" style=\"display:inline-block;margin-left:8px;padding:4px 8px;border:1px solid #f0c276;border-radius:12px;color:#a46a13;font-size:10px;text-decoration:none;letter-spacing:0\">Login to your account</a></td></tr>
-                  <tr><td style=\"padding-top:26px;font-size:28px;line-height:1.15;color:#17364b;font-weight:800\">One last step, {escape(name)}.</td></tr>
-                  <tr><td style=\"padding-top:14px;font-size:15px;line-height:1.65;color:#61717b\">Thanks for creating your {brand_name} account. Your account is active and ready to shop quality medical supplies.</td></tr>
-                  <tr><td style=\"padding-top:22px\"><a href=\"{site_url}\" style=\"display:inline-block;padding:13px 18px;border-radius:5px;background:#38586a;color:#ffffff;font-size:12px;font-weight:800;letter-spacing:.5px;text-decoration:none\">START SHOPPING</a></td></tr>
+                  <tr><td style=\"font-size:12px;line-height:1.4;color:#c6f135;font-weight:800;letter-spacing:.8px\">WELCOME TO <span style=\"color:#111111\">{brand_name}</span> <a href=\"{escape(_site_url('/login'))}\" style=\"display:inline-block;margin-left:8px;padding:4px 8px;border:1px solid #c6f135;border-radius:12px;color:#111111;font-size:10px;text-decoration:none;letter-spacing:0\">Login to your account</a></td></tr>
+                  <tr><td style=\"padding-top:26px;font-size:28px;line-height:1.15;color:#111111;font-weight:800\">One last step, {escape(name)}.</td></tr>
+                  <tr><td style=\"padding-top:14px;font-size:15px;line-height:1.65;color:#686860\">Thanks for creating your {brand_name} account. Your account is ready to explore relaxed fits and considered everyday essentials.</td></tr>
+                  <tr><td style=\"padding-top:22px\"><a href=\"{site_url}\" style=\"display:inline-block;padding:13px 18px;border-radius:5px;background:#111111;color:#ffffff;font-size:12px;font-weight:800;letter-spacing:.5px;text-decoration:none\">START SHOPPING</a></td></tr>
                   {f'<tr><td>{gift_html}</td></tr>' if gift_html else ''}
-                  <tr><td style=\"padding-top:20px;font-size:12px;line-height:1.55;color:#71858d\">You can manage your account, orders and saved products any time from My Account.</td></tr>
+                  <tr><td style=\"padding-top:20px;font-size:12px;line-height:1.55;color:#686860\">You can manage your account, orders and saved products any time from My Account.</td></tr>
                   <tr><td style=\"padding-top:28px\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>
-                    <td class=\"life-line-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-right:12px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Fast delivery</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">Tracked shipping straight to your door.</span></td>
-                    <td class=\"life-line-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding:0 6px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Easy returns</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">Changed your mind? No stress.</span></td>
-                    <td class=\"life-line-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-left:12px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Member offers</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">First to know about new drops.</span></td>
+                    <td class=\"offday-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-right:12px\"><span style=\"display:block;width:22px;height:22px;background:#c6f135\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#111111\">Relaxed fits</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#686860\">Easy-to-wear shapes for everyday.</span></td>
+                    <td class=\"offday-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding:0 6px\"><span style=\"display:block;width:22px;height:22px;background:#c6f135\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#111111\">Everyday essentials</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#686860\">Versatile pieces made for regular wear.</span></td>
+                    <td class=\"offday-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-left:12px\"><span style=\"display:block;width:22px;height:22px;background:#c6f135\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#111111\">New drops</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#686860\">See the latest additions to OFFDAY.</span></td>
                   </tr></table></td></tr>
                 </table>
               </td>
             </tr>
-            <tr><td style=\"padding:0 50px\"><div style=\"height:1px;background:#e8eceb\"></div></td></tr>
-            <tr><td style=\"padding:22px 50px 26px;text-align:center;font-size:11px;line-height:1.55;color:#71858d\">Didn’t you create this account? You can safely ignore this email — nothing will happen without your confirmation.</td></tr>
-            <tr><td style=\"padding:22px 30px 24px;background:#38586a;text-align:center\"><div style=\"color:#ff9000;font-size:13px;font-weight:800;letter-spacing:1.3px\">THANK YOU FOR SHOPPING</div><div style=\"padding-top:14px;font-size:11px\"><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Help Centre</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Returns</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/profile'))}\" style=\"color:#ffffff;text-decoration:none\">My Account</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/about'))}\" style=\"color:#ffffff;text-decoration:none\">Terms</a></div><div style=\"padding-top:12px;color:#d8e0e3;font-size:11px\">{brand_name} · {brand_country} · <a href=\"{site_url}\" style=\"color:#ffffff;text-decoration:none\">Visit our website</a></div><div style=\"padding-top:6px;color:#d8e0e3;font-size:11px\">Questions? Email <a href=\"mailto:{brand_support_email}\" style=\"color:#ffffff;text-decoration:none\">{brand_support_email}</a> or call {brand_phone}</div><div style=\"padding-top:13px;color:#b9c8ce;font-size:10px\">You’re receiving this email because an account was created at {brand_name}.</div></td></tr>
+            <tr><td style=\"padding:0 50px\"><div style=\"height:1px;background:#d6d4ca\"></div></td></tr>
+            <tr><td style=\"padding:22px 50px 26px;text-align:center;font-size:11px;line-height:1.55;color:#686860\">Didn’t you create this account? You can safely ignore this email — nothing will happen without your confirmation.</td></tr>
+            <tr><td style=\"padding:22px 30px 24px;background:#111111;text-align:center\"><div style=\"color:#c6f135;font-size:13px;font-weight:800;letter-spacing:1.3px\">THANK YOU FOR SHOPPING</div><div style=\"padding-top:14px;font-size:11px\"><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Help Centre</a><span style=\"color:#c6f135;padding:0 5px\">|</span><a href=\"{escape(_site_url('/help/returns'))}\" style=\"color:#ffffff;text-decoration:none\">Returns</a><span style=\"color:#c6f135;padding:0 5px\">|</span><a href=\"{escape(_site_url('/profile'))}\" style=\"color:#ffffff;text-decoration:none\">My Account</a><span style=\"color:#c6f135;padding:0 5px\">|</span><a href=\"{escape(_site_url('/help/terms'))}\" style=\"color:#ffffff;text-decoration:none\">Terms</a></div><div style=\"padding-top:12px;color:#d8e0e3;font-size:11px\">{footer_details_html}</div>{_brand_contact_html()}<div style=\"padding-top:13px;color:#b9c8ce;font-size:10px\">You’re receiving this email because an account was created at {brand_name}.</div></td></tr>
           </table>
           <div style=\"padding:16px 0 4px;text-align:center\">{_social_links_html()}</div>
         </div>
@@ -487,7 +522,7 @@ def send_registration_email(user_id):
         subject = f"Welcome to {_brand_name()} — your account is ready"
         text_body = (
             f"Welcome to {_brand_name()}, {name}.\n\n"
-            "Your account is active and ready to shop quality medical supplies.\n"
+            "Your account is active and ready to discover OFFDAY collections.\n"
             f"{gift_text}\n"
             f"Start shopping: {_site_url('/')}\n"
         )
@@ -497,7 +532,7 @@ def send_registration_email(user_id):
             text_body,
             html_body,
             user.email,
-            inline_images=(("life-line-logo", EMAIL_LOGO_PATH),),
+            inline_images=(("offday-logo", EMAIL_LOGO_PATH),),
         )
         if not _send(message):
             return False
@@ -536,22 +571,22 @@ def _order_item_rows_html(items, image_cids):
             )
         else:
             visual = (
-                '<div aria-hidden="true" style="width:58px;height:58px;background:#f4f0e6;'
+                '<div aria-hidden="true" style="width:58px;height:58px;background:#f1f0e9;'
                 'border-radius:4px"></div>'
             )
         rows.append(
             f'''<tr>
-              <td style="padding:10px 8px 10px 0;border-bottom:1px solid #e7e0d3;width:68px;vertical-align:middle">{visual}</td>
-              <td style="padding:10px 8px;border-bottom:1px solid #e7e0d3;vertical-align:middle">
-                <div style="font-size:15px;line-height:1.35;color:#304a54;font-weight:700">{product_name}</div>
-                <div style="padding-top:3px;font-size:11px;line-height:1.45;color:#71858d">{metadata}</div>
+              <td style="padding:10px 8px 10px 0;border-bottom:1px solid #d6d4ca;width:68px;vertical-align:middle">{visual}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid #d6d4ca;vertical-align:middle">
+                <div style="font-size:15px;line-height:1.35;color:#111111;font-weight:700">{product_name}</div>
+                <div style="padding-top:3px;font-size:11px;line-height:1.45;color:#686860">{metadata}</div>
               </td>
-              <td style="padding:10px 0;text-align:right;border-bottom:1px solid #e7e0d3;white-space:nowrap;vertical-align:middle;font-size:14px;color:#304a54">{escape(_money(item.total_price))}</td>
+              <td style="padding:10px 0;text-align:right;border-bottom:1px solid #d6d4ca;white-space:nowrap;vertical-align:middle;font-size:14px;color:#111111">{escape(_money(item.total_price))}</td>
             </tr>'''
         )
     return "".join(rows) or (
-        '<tr><td colspan="3" style="padding:14px 0;border-bottom:1px solid #e7e0d3;'
-        'font-size:13px;color:#71858d">Your order is being prepared.</td></tr>'
+        '<tr><td colspan="3" style="padding:14px 0;border-bottom:1px solid #d6d4ca;'
+        'font-size:13px;color:#686860">Your order is being prepared.</td></tr>'
     )
 
 
@@ -565,9 +600,7 @@ def _order_confirmation_email_html(
     site_url = escape(_site_url("/"))
     order_url = escape(_site_url("/myorders"))
     brand_name = escape(_brand_name())
-    brand_support_email = escape(_brand_support_email())
-    brand_phone = escape(_brand_phone())
-    brand_country = escape(_brand_country())
+    footer_details_html = _brand_footer_details(_site_url("/"))
     arrival = escape(_order_arrival_text(order))
     totals = _order_totals(order)
     address_lines = "<br>".join(escape(line) for line in _order_address_lines(order))
@@ -575,7 +608,7 @@ def _order_confirmation_email_html(
     discount_row = ""
     if totals["has_discount"]:
         discount_row = f'''
-          <tr><td style="padding:6px 0;text-align:left;color:#71858d">Discount</td><td style="padding:6px 0;text-align:right;color:#ff9000">- {escape(totals["discount"])}</td></tr>'''
+          <tr><td style="padding:6px 0;text-align:left;color:#686860">Discount</td><td style="padding:6px 0;text-align:right;color:#c6f135">- {escape(totals["discount"])}</td></tr>'''
 
     return f'''
     <!doctype html>
@@ -586,59 +619,59 @@ def _order_confirmation_email_html(
         <title>Order confirmed - {escape(number)}</title>
         <style>
           @media screen and (max-width: 620px) {{
-            .life-line-email-shell {{ padding: 10px !important; }}
-            .life-line-email-card {{ width: 100% !important; }}
-            .life-line-email-body {{ padding: 34px 20px 28px !important; }}
-            .life-line-email-header {{ padding: 24px 20px 16px !important; }}
-            .life-line-meta-cell {{ display: block !important; width: 100% !important; border-right: 0 !important; border-bottom: 1px solid #e7e0d3 !important; }}
-            .life-line-meta-cell:last-child {{ border-bottom: 0 !important; }}
-            .life-line-info-cell {{ display: block !important; width: 100% !important; padding: 12px 0 0 !important; }}
-            .life-line-info-cell + .life-line-info-cell {{ padding-top: 22px !important; }}
-            .life-line-items-table {{ font-size: 13px !important; }}
+            .offday-email-shell {{ padding: 10px !important; }}
+            .offday-email-card {{ width: 100% !important; }}
+            .offday-email-body {{ padding: 34px 20px 28px !important; }}
+            .offday-email-header {{ padding: 24px 20px 16px !important; }}
+            .offday-meta-cell {{ display: block !important; width: 100% !important; border-right: 0 !important; border-bottom: 1px solid #d6d4ca !important; }}
+            .offday-meta-cell:last-child {{ border-bottom: 0 !important; }}
+            .offday-info-cell {{ display: block !important; width: 100% !important; padding: 12px 0 0 !important; }}
+            .offday-info-cell + .offday-info-cell {{ padding-top: 22px !important; }}
+            .offday-items-table {{ font-size: 13px !important; }}
           }}
         </style>
       </head>
-      <body style="margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54">
-        <div class="life-line-email-shell" style="padding:28px 12px;background:#f4f0e6">
-          <table role="presentation" class="life-line-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden">
-            <tr><td class="life-line-email-header" style="padding:28px 30px 18px;text-align:right;background:#fffaf0">
-              <a href="{site_url}" style="text-decoration:none"><img src="cid:life-line-logo" width="165" alt="{brand_name} logo" style="display:inline-block;width:165px;max-width:70%;height:auto;border:0"></a>
+      <body style="margin:0;padding:0;background:#f1f0e9;font-family:Arial,Helvetica,sans-serif;color:#111111">
+        <div class="offday-email-shell" style="padding:28px 12px;background:#f1f0e9">
+          <table role="presentation" class="offday-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #c6f135;border-radius:8px;overflow:hidden">
+            <tr><td class="offday-email-header" style="padding:28px 30px 18px;text-align:right;background:#f1f0e9">
+              <a href="{site_url}" style="text-decoration:none"><img src="cid:offday-logo" width="165" alt="{brand_name} logo" style="display:inline-block;width:165px;max-width:70%;height:auto;border:0"></a>
             </td></tr>
-            <tr><td class="life-line-email-body" style="padding:66px 48px 58px">
-              <div style="font-size:12px;line-height:1.4;color:#ff9000;font-weight:800;letter-spacing:4px">ORDER CONFIRMED <span style="display:inline-block;width:21px;height:21px;line-height:21px;margin-left:3px;border-radius:50%;background:#ff9000;color:#17364b;text-align:center;font-size:14px;letter-spacing:0">✓</span></div>
-              <h1 style="margin:62px 0 10px;font-size:28px;line-height:1.15;color:#38586a;letter-spacing:-.4px">Thank you, {escape(name)}.</h1>
-              <p style="margin:0;font-size:15px;line-height:1.65;color:#71858d">We&apos;ve received your order and we&apos;re getting it ready. You&apos;ll get another email with tracking details as soon as it ships.</p>
+            <tr><td class="offday-email-body" style="padding:66px 48px 58px">
+              <div style="font-size:12px;line-height:1.4;color:#c6f135;font-weight:800;letter-spacing:4px">ORDER CONFIRMED <span style="display:inline-block;width:21px;height:21px;line-height:21px;margin-left:3px;border-radius:50%;background:#c6f135;color:#111111;text-align:center;font-size:14px;letter-spacing:0">✓</span></div>
+              <h1 style="margin:62px 0 10px;font-size:28px;line-height:1.15;color:#111111;letter-spacing:-.4px">Thank you, {escape(name)}.</h1>
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#686860">We&apos;ve received your order and we&apos;re getting it ready. You&apos;ll get another email with tracking details as soon as it ships.</p>
 
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:2px solid #ff9000;background:#fffaf0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:2px solid #c6f135;background:#f1f0e9">
                 <tr>
-                  <td class="life-line-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #e7e0d3"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ORDER NO.</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">#{escape(number)}</div></td>
-                  <td class="life-line-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #e7e0d3"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ORDER DATE</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">{escape(localtime(order.created_at).strftime("%d %b %Y"))}</div></td>
-                  <td class="life-line-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ARRIVES</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">{arrival}</div></td>
+                  <td class="offday-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #d6d4ca"><div style="font-size:10px;line-height:1.4;color:#686860;font-weight:800;letter-spacing:2px">ORDER NO.</div><div style="padding-top:7px;font-size:15px;color:#111111;font-weight:800">#{escape(number)}</div></td>
+                  <td class="offday-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #d6d4ca"><div style="font-size:10px;line-height:1.4;color:#686860;font-weight:800;letter-spacing:2px">ORDER DATE</div><div style="padding-top:7px;font-size:15px;color:#111111;font-weight:800">{escape(localtime(order.created_at).strftime("%d %b %Y"))}</div></td>
+                  <td class="offday-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center"><div style="font-size:10px;line-height:1.4;color:#686860;font-weight:800;letter-spacing:2px">ARRIVES</div><div style="padding-top:7px;font-size:15px;color:#111111;font-weight:800">{arrival}</div></td>
                 </tr>
               </table>
 
-              <div style="padding-top:44px;font-size:12px;line-height:1.4;color:#38586a;font-weight:800;letter-spacing:3px;border-bottom:2px solid #38586a;padding-bottom:7px">YOUR ITEMS</div>
-              <table role="presentation" class="life-line-items-table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">{_order_item_rows_html(items, image_cids)}</table>
+              <div style="padding-top:44px;font-size:12px;line-height:1.4;color:#111111;font-weight:800;letter-spacing:3px;border-bottom:2px solid #111111;padding-bottom:7px">YOUR ITEMS</div>
+              <table role="presentation" class="offday-items-table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">{_order_item_rows_html(items, image_cids)}</table>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:340px;margin:24px 0 0 auto;font-size:14px">
-                <tr><td style="padding:6px 0;text-align:left;color:#71858d">Subtotal</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["subtotal"])}</td></tr>
+                <tr><td style="padding:6px 0;text-align:left;color:#686860">Subtotal</td><td style="padding:6px 0;text-align:right;color:#111111">{escape(totals["subtotal"])}</td></tr>
                 {discount_row}
-                <tr><td style="padding:6px 0;text-align:left;color:#71858d">Shipping</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["shipping"])}</td></tr>
-                <tr><td style="padding:6px 0;text-align:left;color:#71858d">VAT (5%)</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["vat"])}</td></tr>
-                <tr><td colspan="2" style="padding-top:4px;border-bottom:1px solid #e7e0d3"></td></tr>
-                <tr><td style="padding:18px 0 0;text-align:left;color:#38586a;font-size:12px;font-weight:800;letter-spacing:3px">TOTAL</td><td style="padding:14px 0 0;text-align:right;color:#38586a;font-size:25px;font-weight:800">{escape(totals["total"])}</td></tr>
+                <tr><td style="padding:6px 0;text-align:left;color:#686860">Shipping</td><td style="padding:6px 0;text-align:right;color:#111111">{escape(totals["shipping"])}</td></tr>
+                <tr><td style="padding:6px 0;text-align:left;color:#686860">VAT (5%)</td><td style="padding:6px 0;text-align:right;color:#111111">{escape(totals["vat"])}</td></tr>
+                <tr><td colspan="2" style="padding-top:4px;border-bottom:1px solid #d6d4ca"></td></tr>
+                <tr><td style="padding:18px 0 0;text-align:left;color:#111111;font-size:12px;font-weight:800;letter-spacing:3px">TOTAL</td><td style="padding:14px 0 0;text-align:right;color:#111111;font-size:25px;font-weight:800">{escape(totals["total"])}</td></tr>
               </table>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:38px">
                 <tr>
-                  <td class="life-line-info-cell" width="50%" valign="top" style="padding-right:14px"><div style="font-size:12px;color:#38586a;font-weight:800;letter-spacing:3px">SHIPPING TO</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#304a54">{address_lines}</div></td>
-                  <td class="life-line-info-cell" width="50%" valign="top" style="padding-left:14px"><div style="font-size:12px;color:#38586a;font-weight:800;letter-spacing:3px">PAYMENT</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#304a54">{payment_lines}</div></td>
+                  <td class="offday-info-cell" width="50%" valign="top" style="padding-right:14px"><div style="font-size:12px;color:#111111;font-weight:800;letter-spacing:3px">SHIPPING TO</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#111111">{address_lines}</div></td>
+                  <td class="offday-info-cell" width="50%" valign="top" style="padding-left:14px"><div style="font-size:12px;color:#111111;font-weight:800;letter-spacing:3px">PAYMENT</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#111111">{payment_lines}</div></td>
                 </tr>
               </table>
 
-              <div style="padding-top:48px;text-align:center"><a href="{order_url}" style="display:inline-block;padding:11px 15px;border-radius:18px;background:#7891a0;color:#ffffff;font-size:12px;font-weight:800;text-decoration:none">VIEW MY ORDER <span style="font-size:18px;line-height:10px;vertical-align:-1px">→</span></a></div>
+              <div style="padding-top:48px;text-align:center"><a href="{order_url}" style="display:inline-block;padding:11px 15px;border-radius:18px;background:#111111;color:#c6f135;font-size:12px;font-weight:800;text-decoration:none">VIEW MY ORDER <span style="font-size:18px;line-height:10px;vertical-align:-1px">→</span></a></div>
             </td></tr>
-            <tr><td style="padding:40px 30px 44px;background:#38586a;text-align:center"><div style="color:#ff9000;font-size:13px;font-weight:800;letter-spacing:3px">THANK YOU FOR SHOPPING</div><div style="padding-top:20px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/profile'))}" style="color:#ffffff;text-decoration:none">My Account</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/about'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:18px;color:#d8e0e3;font-size:11px">{brand_name} · {brand_country} · <a href="{site_url}" style="color:#ffffff;text-decoration:none">Visit our website</a></div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">Questions? Email <a href="mailto:{brand_support_email}" style="color:#ffffff;text-decoration:none">{brand_support_email}</a> or call {brand_phone}</div><div style="padding-top:14px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at {brand_name}.</div></td></tr>
+            <tr><td style="padding:40px 30px 44px;background:#111111;text-align:center"><div style="color:#c6f135;font-size:13px;font-weight:800;letter-spacing:3px">THANK YOU FOR SHOPPING</div><div style="padding-top:20px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#c6f135;padding:0 5px">|</span><a href="{escape(_site_url('/help/returns'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#c6f135;padding:0 5px">|</span><a href="{escape(_site_url('/profile'))}" style="color:#ffffff;text-decoration:none">My Account</a><span style="color:#c6f135;padding:0 5px">|</span><a href="{escape(_site_url('/help/terms'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:18px;color:#d8e0e3;font-size:11px">{footer_details_html}</div>{_brand_contact_html()}<div style="padding-top:14px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at {brand_name}.</div></td></tr>
           </table>
           <div style="padding:16px 0 4px;text-align:center">{_social_links_html()}</div>
         </div>
@@ -649,6 +682,7 @@ def _order_confirmation_email_html(
 
 def _order_confirmation_email_text(order, name, number, items):
     totals = _order_totals(order)
+    contact_line = _brand_contact_text()
     lines = [
         f"Order confirmed - {number}",
         "",
@@ -677,11 +711,11 @@ def _order_confirmation_email_text(order, name, number, items):
             f"Total: {totals['total']}",
             "",
             f"Shipping to: {_address_text(order)}",
-            f"Need help? {_brand_support_email()} | {_brand_phone()}",
-            "",
-            f"View your order: {_site_url('/myorders')}",
         ]
     )
+    if contact_line:
+        lines.append(contact_line)
+    lines.extend(["", f"View your order: {_site_url('/myorders')}"])
     return "\n".join(lines)
 
 
@@ -692,15 +726,15 @@ def _invoice_item_rows_html(items):
         metadata = escape(_order_item_meta(item))
         rows.append(
             f'''<tr>
-              <td style="padding:13px 12px;border-bottom:1px solid #e7e0d3;vertical-align:middle"><div style="font-size:14px;line-height:1.35;color:#304a54;font-weight:700">{product_name}</div><div style="padding-top:3px;font-size:11px;line-height:1.45;color:#71858d">{metadata}</div></td>
-              <td style="padding:13px 8px;text-align:center;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54">{item.quantity}</td>
-              <td style="padding:13px 8px;text-align:right;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54;white-space:nowrap">{escape(_money(item.price))}</td>
-              <td style="padding:13px 12px 13px 8px;text-align:right;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54;font-weight:700;white-space:nowrap">{escape(_money(item.total_price))}</td>
+              <td style="padding:13px 12px;border-bottom:1px solid #d6d4ca;vertical-align:middle"><div style="font-size:14px;line-height:1.35;color:#111111;font-weight:700">{product_name}</div><div style="padding-top:3px;font-size:11px;line-height:1.45;color:#686860">{metadata}</div></td>
+              <td style="padding:13px 8px;text-align:center;border-bottom:1px solid #d6d4ca;vertical-align:middle;font-size:13px;color:#111111">{item.quantity}</td>
+              <td style="padding:13px 8px;text-align:right;border-bottom:1px solid #d6d4ca;vertical-align:middle;font-size:13px;color:#111111;white-space:nowrap">{escape(_money(item.price))}</td>
+              <td style="padding:13px 12px 13px 8px;text-align:right;border-bottom:1px solid #d6d4ca;vertical-align:middle;font-size:13px;color:#111111;font-weight:700;white-space:nowrap">{escape(_money(item.total_price))}</td>
             </tr>'''
         )
     return "".join(rows) or (
-        '<tr><td colspan="4" style="padding:14px 12px;border-bottom:1px solid #e7e0d3;'
-        'font-size:13px;color:#71858d">Your order items are being prepared.</td></tr>'
+        '<tr><td colspan="4" style="padding:14px 12px;border-bottom:1px solid #d6d4ca;'
+        'font-size:13px;color:#686860">Your order items are being prepared.</td></tr>'
     )
 
 
@@ -718,9 +752,7 @@ def _invoice_email_html(order, name, invoice_number, items):
     site_url = escape(_site_url("/"))
     invoice_url = escape(_site_url("/myorders"))
     brand_name = escape(_brand_name())
-    brand_support_email = escape(_brand_support_email())
-    brand_phone = escape(_brand_phone())
-    brand_country = escape(_brand_country())
+    footer_details_html = _brand_footer_details(_site_url("/"))
     invoice_date = localtime(order.created_at).strftime("%d %b %Y") if order.created_at else "-"
     totals = _order_totals(order)
     customer_lines = "<br>".join(escape(line) for line in _invoice_customer_lines(order))
@@ -732,13 +764,13 @@ def _invoice_email_html(order, name, invoice_number, items):
     discount_row = ""
     if totals["has_discount"]:
         discount_row = f'''
-          <tr><td style="padding:6px 0;text-align:left;color:#71858d">{discount_label}</td><td style="padding:6px 0;text-align:right;color:#ff9000">- {escape(totals["discount"])}</td></tr>'''
+          <tr><td style="padding:6px 0;text-align:left;color:#686860">{discount_label}</td><td style="padding:6px 0;text-align:right;color:#c6f135">- {escape(totals["discount"])}</td></tr>'''
     steps = _invoice_status_steps(order)
     step_cells = []
     for index, (label, detail) in enumerate(steps):
-        active_color = "#ff9000" if index == 0 or (index == 1 and order.status in {"Processing", "Shipped", "Delivered"}) or (index == 2 and order.status in {"Shipped", "Delivered"}) or (index == 3 and order.status == "Delivered") else "#e7e0d3"
+        active_color = "#c6f135" if index == 0 or (index == 1 and order.status in {"Processing", "Shipped", "Delivered"}) or (index == 2 and order.status in {"Shipped", "Delivered"}) or (index == 3 and order.status == "Delivered") else "#d6d4ca"
         step_cells.append(
-            f'''<td width="25%" style="padding:0 3px;text-align:center;vertical-align:top"><div style="height:5px;background:{active_color}"></div><div style="padding-top:10px;font-size:11px;line-height:1.35;color:#304a54">{escape(label)}</div><div style="font-size:10px;line-height:1.35;color:#71858d">{escape(detail)}</div></td>'''
+            f'''<td width="25%" style="padding:0 3px;text-align:center;vertical-align:top"><div style="height:5px;background:{active_color}"></div><div style="padding-top:10px;font-size:11px;line-height:1.35;color:#111111">{escape(label)}</div><div style="font-size:10px;line-height:1.35;color:#686860">{escape(detail)}</div></td>'''
         )
     return f'''
     <!doctype html>
@@ -749,8 +781,8 @@ def _invoice_email_html(order, name, invoice_number, items):
         <title>Paid invoice - {escape(invoice_number)}</title>
         <style>
           @media screen and (max-width: 620px) {{
-            .life-line-email-shell {{ padding: 10px !important; }}
-            .life-line-email-card {{ width: 100% !important; }}
+            .offday-email-shell {{ padding: 10px !important; }}
+            .offday-email-card {{ width: 100% !important; }}
             .invoice-header {{ padding: 24px 20px 18px !important; }}
             .invoice-band {{ padding: 23px 20px !important; }}
             .invoice-body {{ padding: 30px 20px 28px !important; }}
@@ -763,47 +795,47 @@ def _invoice_email_html(order, name, invoice_number, items):
           }}
         </style>
       </head>
-      <body style="margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54">
-        <div class="life-line-email-shell" style="padding:28px 12px;background:#f4f0e6">
-          <table role="presentation" class="life-line-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden">
-            <tr><td class="invoice-header" style="padding:28px 30px 22px;text-align:left;background:#fffaf0">
-              <a href="{site_url}" style="text-decoration:none"><img src="cid:life-line-logo" width="185" alt="{brand_name} logo" style="display:block;width:185px;max-width:80%;height:auto;border:0"></a>
+      <body style="margin:0;padding:0;background:#f1f0e9;font-family:Arial,Helvetica,sans-serif;color:#111111">
+        <div class="offday-email-shell" style="padding:28px 12px;background:#f1f0e9">
+          <table role="presentation" class="offday-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #c6f135;border-radius:8px;overflow:hidden">
+            <tr><td class="invoice-header" style="padding:28px 30px 22px;text-align:left;background:#f1f0e9">
+              <a href="{site_url}" style="text-decoration:none"><img src="cid:offday-logo" width="185" alt="{brand_name} logo" style="display:block;width:185px;max-width:80%;height:auto;border:0"></a>
             </td></tr>
-            <tr><td class="invoice-band" style="padding:24px 36px;background:#38586a;color:#ffffff">
+            <tr><td class="invoice-band" style="padding:24px 36px;background:#111111;color:#ffffff">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
                 <td width="58%" valign="middle"><div style="font-family:Georgia,serif;font-size:28px;line-height:1.1;letter-spacing:2px;color:#ffffff">INVOICE</div><div style="padding-top:8px;font-size:12px;letter-spacing:1px;color:#d8e0e3">#{escape(invoice_number)}</div></td>
-                <td width="42%" valign="middle" style="text-align:right"><div style="display:inline-block;padding:8px 11px;border-radius:9px;background:#c8d5df;color:#38586a;font-size:22px;line-height:1;font-weight:800;letter-spacing:1px"><span style="display:inline-block;width:25px;height:25px;line-height:25px;margin-right:4px;border-radius:50%;background:#00a51a;color:#ffffff;text-align:center;font-size:18px;vertical-align:2px">✓</span>PAID</div><div style="padding-top:9px;font-size:11px;color:#d8e0e3">Issued {escape(invoice_date)}</div></td>
+                <td width="42%" valign="middle" style="text-align:right"><div style="display:inline-block;padding:8px 11px;border-radius:9px;background:#f1f0e9;color:#111111;font-size:22px;line-height:1;font-weight:800;letter-spacing:1px"><span style="display:inline-block;width:25px;height:25px;line-height:25px;margin-right:4px;border-radius:50%;background:#00a51a;color:#ffffff;text-align:center;font-size:18px;vertical-align:2px">✓</span>PAID</div><div style="padding-top:9px;font-size:11px;color:#d8e0e3">Issued {escape(invoice_date)}</div></td>
               </tr></table>
             </td></tr>
             <tr><td class="invoice-body" style="padding:50px 38px 34px">
-               <h1 style="margin:0 0 9px;font-size:24px;line-height:1.2;color:#38586a;letter-spacing:-.3px">Hi {escape(name)}, your order is being prepared.</h1>
-              <p style="margin:0;font-size:15px;line-height:1.6;color:#71858d">Thank you for shopping with {brand_name}. Your payment has been received and your order is being prepared. Your invoice is below - a PDF copy is attached for your records.</p>
+               <h1 style="margin:0 0 9px;font-size:24px;line-height:1.2;color:#111111;letter-spacing:-.3px">Hi {escape(name)}, your order is being prepared.</h1>
+              <p style="margin:0;font-size:15px;line-height:1.6;color:#686860">Thank you for shopping with {brand_name}. Your payment has been received and your order is being prepared. Your invoice is below - a PDF copy is attached for your records.</p>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px"><tr>
-                <td class="invoice-half" width="50%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>BILLED TO</div><div style="padding-top:15px;font-size:13px;line-height:1.6;color:#304a54">{customer_lines}</div></td>
-                <td class="invoice-half" width="50%" valign="top" style="padding-left:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>ORDER DETAILS</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;font-size:13px;line-height:1.75"><tr><td style="color:#71858d">Order no.</td><td style="text-align:right;color:#304a54;font-weight:700">#{escape(invoice_number)}</td></tr><tr><td style="color:#71858d">Order date</td><td style="text-align:right;color:#304a54">{escape(invoice_date)}</td></tr><tr><td style="color:#71858d">Payment</td><td style="text-align:right;color:#304a54">{payment_text}</td></tr><tr><td style="color:#71858d">Shipping</td><td style="text-align:right;color:#304a54">{shipping_text}</td></tr></table></td>
+                <td class="invoice-half" width="50%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#111111;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#c6f135;vertical-align:-5px"></span>BILLED TO</div><div style="padding-top:15px;font-size:13px;line-height:1.6;color:#111111">{customer_lines}</div></td>
+                <td class="invoice-half" width="50%" valign="top" style="padding-left:18px"><div style="font-size:11px;color:#111111;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#c6f135;vertical-align:-5px"></span>ORDER DETAILS</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;font-size:13px;line-height:1.75"><tr><td style="color:#686860">Order no.</td><td style="text-align:right;color:#111111;font-weight:700">#{escape(invoice_number)}</td></tr><tr><td style="color:#686860">Order date</td><td style="text-align:right;color:#111111">{escape(invoice_date)}</td></tr><tr><td style="color:#686860">Payment</td><td style="text-align:right;color:#111111">{payment_text}</td></tr><tr><td style="color:#686860">Shipping</td><td style="text-align:right;color:#111111">{shipping_text}</td></tr></table></td>
               </tr></table>
 
               <table role="presentation" class="invoice-table" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-collapse:collapse;font-size:13px">
-                <thead><tr style="background:#38586a;color:#ffffff"><th style="padding:11px 12px;text-align:left;font-size:10px;letter-spacing:2px">ITEM</th><th style="padding:11px 8px;text-align:center;font-size:10px;letter-spacing:2px">QTY</th><th style="padding:11px 8px;text-align:right;font-size:10px;letter-spacing:2px">PRICE</th><th style="padding:11px 12px 11px 8px;text-align:right;font-size:10px;letter-spacing:2px">TOTAL</th></tr></thead>
+                <thead><tr style="background:#111111;color:#ffffff"><th style="padding:11px 12px;text-align:left;font-size:10px;letter-spacing:2px">ITEM</th><th style="padding:11px 8px;text-align:center;font-size:10px;letter-spacing:2px">QTY</th><th style="padding:11px 8px;text-align:right;font-size:10px;letter-spacing:2px">PRICE</th><th style="padding:11px 12px 11px 8px;text-align:right;font-size:10px;letter-spacing:2px">TOTAL</th></tr></thead>
                 <tbody>{_invoice_item_rows_html(items)}</tbody>
               </table>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px"><tr>
-                <td class="invoice-half" width="49%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px">NOTE</div><div style="padding-top:11px;font-size:12px;line-height:1.6;color:#71858d">Prices in UAE Dirhams (AED).<br>Payment received for this order.<br>Keep this email for your records.</div></td>
-                <td class="invoice-half invoice-summary" width="51%" valign="top" style="padding-left:18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr><td style="padding:5px 0;color:#71858d">Subtotal</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["subtotal"].replace("AED ", ""))}</td></tr>{discount_row}<tr><td style="padding:5px 0;color:#71858d">Shipping</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["shipping"].replace("AED ", ""))}</td></tr><tr><td style="padding:5px 0;color:#71858d">VAT (5%)</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["vat"].replace("AED ", ""))}</td></tr></table></td>
+                <td class="invoice-half" width="49%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#111111;font-weight:800;letter-spacing:2px">NOTE</div><div style="padding-top:11px;font-size:12px;line-height:1.6;color:#686860">Prices in UAE Dirhams (AED).<br>Payment received for this order.<br>Keep this email for your records.</div></td>
+                <td class="invoice-half invoice-summary" width="51%" valign="top" style="padding-left:18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr><td style="padding:5px 0;color:#686860">Subtotal</td><td style="padding:5px 0;text-align:right;color:#111111">{escape(totals["subtotal"].replace("AED ", ""))}</td></tr>{discount_row}<tr><td style="padding:5px 0;color:#686860">Shipping</td><td style="padding:5px 0;text-align:right;color:#111111">{escape(totals["shipping"].replace("AED ", ""))}</td></tr><tr><td style="padding:5px 0;color:#686860">VAT (5%)</td><td style="padding:5px 0;text-align:right;color:#111111">{escape(totals["vat"].replace("AED ", ""))}</td></tr></table></td>
               </tr></table>
 
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:25px;border-radius:8px;background:#c8d5df"><tr><td style="padding:23px 19px;color:#38586a;font-size:15px;letter-spacing:.5px">TOTAL PAID</td><td style="padding:18px 19px;text-align:right;color:#38586a;white-space:nowrap"><span style="font-size:13px">AED </span><strong style="font-size:28px;letter-spacing:-.5px">{escape(totals["total"].replace("AED ", ""))}</strong></td></tr></table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:25px;border-radius:8px;background:#f1f0e9"><tr><td style="padding:23px 19px;color:#111111;font-size:15px;letter-spacing:.5px">TOTAL PAID</td><td style="padding:18px 19px;text-align:right;color:#111111;white-space:nowrap"><span style="font-size:13px">AED </span><strong style="font-size:28px;letter-spacing:-.5px">{escape(totals["total"].replace("AED ", ""))}</strong></td></tr></table>
 
-              <div style="padding-top:32px;font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>WHERE&apos;S MY ORDER?</div>
+              <div style="padding-top:32px;font-size:11px;color:#111111;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#c6f135;vertical-align:-5px"></span>WHERE&apos;S MY ORDER?</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:17px"><tr>{"".join(step_cells)}</tr></table>
 
-              <div style="margin-top:34px;border-top:1px dashed #f0bd68"></div>
-              <div class="invoice-actions" style="padding-top:28px;text-align:center"><a href="{site_url}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#c8d5df;color:#38586a;font-size:12px;text-decoration:none">Buy More</a><a href="{escape(_site_url('/profile'))}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#c8d5df;color:#38586a;font-size:12px;text-decoration:none">My Account</a></div>
-               <div style="padding-top:25px;text-align:center;font-family:Georgia,serif;font-size:11px;color:#9aa7ae">Need a hand? Reply to this email or write to <a href="mailto:{brand_support_email}" style="color:#ff9000;text-decoration:none">{brand_support_email}</a> or call {brand_phone}</div>
+              <div style="margin-top:34px;border-top:1px dashed #c6f135"></div>
+              <div class="invoice-actions" style="padding-top:28px;text-align:center"><a href="{site_url}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#f1f0e9;color:#111111;font-size:12px;text-decoration:none">Buy More</a><a href="{escape(_site_url('/profile'))}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#f1f0e9;color:#111111;font-size:12px;text-decoration:none">My Account</a></div>
+               {_brand_contact_html()}
             </td></tr>
-            <tr><td class="invoice-footer" style="padding:39px 30px 44px;background:#38586a;text-align:center"><div style="color:#ff9000;font-size:13px;font-weight:800;letter-spacing:3px">THANK YOU FOR SHOPPING</div><div style="padding-top:21px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{invoice_url}" style="color:#ffffff;text-decoration:none">Track Order</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/about'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:19px;color:#d8e0e3;font-size:11px">{brand_name} · {brand_country}</div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">{f'TRN {seller_vat} · ' if seller_vat_value else ''}<a href="{site_url}" style="color:#ffffff;text-decoration:none">Visit our website</a></div><div style="padding-top:8px;color:#b9c8ce;font-size:10px">This is a computer-generated invoice and does not require a signature.</div><div style="padding-top:6px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at {brand_name}.</div></td></tr>
+            <tr><td class="invoice-footer" style="padding:39px 30px 44px;background:#111111;text-align:center"><div style="color:#c6f135;font-size:13px;font-weight:800;letter-spacing:3px">THANK YOU FOR SHOPPING</div><div style="padding-top:21px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#c6f135;padding:0 5px">|</span><a href="{escape(_site_url('/help/returns'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#c6f135;padding:0 5px">|</span><a href="{invoice_url}" style="color:#ffffff;text-decoration:none">Track Order</a><span style="color:#c6f135;padding:0 5px">|</span><a href="{escape(_site_url('/help/terms'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:19px;color:#d8e0e3;font-size:11px">{footer_details_html}</div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">{f'TRN {seller_vat} · ' if seller_vat_value else ''}</div><div style="padding-top:8px;color:#b9c8ce;font-size:10px">This is a computer-generated invoice and does not require a signature.</div><div style="padding-top:6px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at {brand_name}.</div></td></tr>
           </table>
           <div style="padding:16px 0 4px;text-align:center">{_social_links_html()}</div>
         </div>
@@ -814,6 +846,7 @@ def _invoice_email_html(order, name, invoice_number, items):
 
 def _invoice_email_text(order, name, invoice_number, items):
     totals = _order_totals(order)
+    contact_line = _brand_contact_text()
     invoice_date = localtime(order.created_at).strftime("%d %b %Y") if order.created_at else "-"
     lines = [
         f"Paid invoice - {invoice_number}",
@@ -837,11 +870,11 @@ def _invoice_email_text(order, name, invoice_number, items):
             f"Shipping: {totals['shipping']}",
             f"VAT (5%): {totals['vat']}",
             f"Total paid: {totals['total']}",
-            "",
-            f"Need help? {_brand_support_email()} | {_brand_phone()}",
-            f"View your order: {_site_url('/myorders')}",
         ]
     )
+    if contact_line:
+        lines.append(contact_line)
+    lines.append(f"View your order: {_site_url('/myorders')}")
     return "\n".join(lines)
 
 
@@ -860,7 +893,7 @@ def send_order_confirmation_email(order_id):
         number = _order_number(order)
         items = list(order.items.all())
         image_cids = {}
-        inline_images = [("life-line-logo", EMAIL_LOGO_PATH)]
+        inline_images = [("offday-logo", EMAIL_LOGO_PATH)]
         for index, item in enumerate(items):
             image_path = _order_item_image_path(item)
             if image_path:
@@ -904,7 +937,7 @@ def send_paid_invoice_email(order_id):
         number = _email_invoice_number(order)
         items = list(order.items.all())
         pdf = render_tax_invoice(order)
-        filename = f"LIFELINE-{_order_number(order)}-invoice.pdf"
+        filename = f"OFFDAY-{_order_number(order)}-invoice.pdf"
         text_body = _invoice_email_text(order, name, number, items)
         html_body = _invoice_email_html(
             order,
@@ -918,7 +951,7 @@ def send_paid_invoice_email(order_id):
             html_body,
             order.user.email,
             attachment=(filename, pdf, "application/pdf"),
-            inline_images=(("life-line-logo", EMAIL_LOGO_PATH),),
+            inline_images=(("offday-logo", EMAIL_LOGO_PATH),),
         )
         if not _send(message):
             return False

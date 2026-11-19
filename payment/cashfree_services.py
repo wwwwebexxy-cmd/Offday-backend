@@ -93,7 +93,7 @@ class CashfreeService:
                 "return_url": return_url,
                 "notify_url": notify_url,
             },
-            "order_note": "life-line online order",
+            "order_note": "OFFDAY Collections order",
         }
         return cls._request(
             "POST",

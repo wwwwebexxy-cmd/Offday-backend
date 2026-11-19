@@ -202,15 +202,15 @@ SIMPLE_JWT = {
 # Browser JWTs stay in HttpOnly cookies.  `None` is only appropriate where
 # the storefront and API are genuinely cross-site; it requires strict CORS and
 # CSRF configuration below.  Lax is the safer default for same-site subdomains.
-JWT_ACCESS_COOKIE_NAME = "life_line_access"
-JWT_REFRESH_COOKIE_NAME = "life_line_refresh"
+JWT_ACCESS_COOKIE_NAME = os.getenv("JWT_ACCESS_COOKIE_NAME", "offday_access").strip()
+JWT_REFRESH_COOKIE_NAME = os.getenv("JWT_REFRESH_COOKIE_NAME", "offday_refresh").strip()
 JWT_ADMIN_ACCESS_COOKIE_NAME = os.getenv(
     "JWT_ADMIN_ACCESS_COOKIE_NAME",
-    "life_line_admin_access",
+    "offday_admin_access",
 ).strip()
 JWT_ADMIN_REFRESH_COOKIE_NAME = os.getenv(
     "JWT_ADMIN_REFRESH_COOKIE_NAME",
-    "life_line_admin_refresh",
+    "offday_admin_refresh",
 ).strip()
 JWT_COOKIE_DOMAIN = os.getenv("JWT_COOKIE_DOMAIN", "").strip()
 JWT_COOKIE_SAMESITE = os.getenv("JWT_COOKIE_SAMESITE", "Lax").strip().title()
@@ -228,52 +228,27 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG else "django.core.mail.backends.smtp.EmailBackend",
 ).strip()
-
-EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "smtp").strip().lower()
-if EMAIL_PROVIDER == "mailtrap":
-    EMAIL_HOST = os.getenv(
-        "MAILTRAP_SMTP_HOST",
-        "sandbox.smtp.mailtrap.io",
-    ).strip()
-    EMAIL_PORT = int(os.getenv("MAILTRAP_SMTP_PORT", "2525"))
-    EMAIL_USE_TLS = True
-    EMAIL_USE_SSL = False
-    EMAIL_HOST_USER = os.getenv(
-        "MAILTRAP_SMTP_USERNAME",
-        os.getenv("EMAIL_HOST_USER", ""),
-    ).strip()
-    EMAIL_HOST_PASSWORD = os.getenv(
-        "MAILTRAP_SMTP_PASSWORD",
-        os.getenv("EMAIL_HOST_PASSWORD", ""),
-    )
-    DEFAULT_FROM_EMAIL = os.getenv(
-        "MAILTRAP_FROM_EMAIL",
-        os.getenv("DEFAULT_FROM_EMAIL", "no-reply@life-line.test"),
-    ).strip()
-else:
-    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com").strip()
-    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in ("true", "1", "t")
-    EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in ("true", "1", "t")
-    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
-    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-    DEFAULT_FROM_EMAIL = os.getenv(
-        "DEFAULT_FROM_EMAIL",
-        EMAIL_HOST_USER or "no-reply@life-line.invalid",
-    ).strip()
+EMAIL_HOST = os.getenv("EMAIL_HOST", "").strip()
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in ("true", "1", "t")
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in ("true", "1", "t")
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    "OFFDAY Collections <no-reply@offday.invalid>",
+).strip()
 
 if EMAIL_USE_TLS and EMAIL_USE_SSL:
     raise RuntimeError("EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled")
 
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
-# New-order notifications are sent here. Falling back to the SMTP username is
-# convenient for a temporary Mailtrap/Gmail setup while still allowing a
-# separate owner inbox in production.
+# New-order notifications are sent here when an owner inbox is configured.
 ORDER_NOTIFICATION_EMAIL = os.getenv(
     "ORDER_NOTIFICATION_EMAIL",
-    EMAIL_HOST_USER,
+    "",
 ).strip()
 
 
@@ -371,12 +346,12 @@ if not (DEBUG or _IS_TESTING) and not SITE_URL.startswith("https://"):
 # Customer-facing brand details used by transactional emails and generated
 # invoices. Keep these values configurable so a future project can reuse the
 # application without inheriting the current site's identity.
-BRAND_NAME = os.getenv("BRAND_NAME", "Lifeline Medical Supplies").strip()
-BRAND_SHORT_NAME = os.getenv("BRAND_SHORT_NAME", "Lifeline").strip()
-BRAND_SUPPORT_EMAIL = os.getenv("BRAND_SUPPORT_EMAIL", "lifeandline@gmail.com").strip()
-BRAND_PHONE = os.getenv("BRAND_PHONE", "+971 56 263 7379").strip()
-BRAND_COUNTRY = os.getenv("BRAND_COUNTRY", "United Arab Emirates").strip()
-BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Medical Supplies").strip()
+BRAND_NAME = os.getenv("BRAND_NAME", "OFFDAY Collections").strip()
+BRAND_SHORT_NAME = os.getenv("BRAND_SHORT_NAME", "OFFDAY").strip()
+BRAND_SUPPORT_EMAIL = os.getenv("BRAND_SUPPORT_EMAIL", "").strip()
+BRAND_PHONE = os.getenv("BRAND_PHONE", "").strip()
+BRAND_COUNTRY = os.getenv("BRAND_COUNTRY", "").strip()
+BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Elevated everyday streetwear").strip()
 
 INVOICE_SELLER_NAME = os.getenv("INVOICE_SELLER_NAME", BRAND_NAME).strip()
 INVOICE_SELLER_ADDRESS = os.getenv("INVOICE_SELLER_ADDRESS", "").strip()

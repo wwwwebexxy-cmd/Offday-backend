@@ -6,9 +6,9 @@ from django.contrib.admin.widgets import FilteredSelectMultiple
 from django.db import transaction
 from .models import *
 
-admin.site.site_header = "Order Dashboard"
-admin.site.site_title = "Order Dashboard"
-admin.site.index_title = "Order Dashboard"
+admin.site.site_header = "OFFDAY Collections Admin"
+admin.site.site_title = "OFFDAY Collections Admin"
+admin.site.index_title = "OFFDAY Collections"
 
 
 def _super_admin_site_permission(_site, request):
@@ -37,6 +37,14 @@ class UserAdmin(admin.ModelAdmin):
 
     search_fields = ( "email",)
     list_filter = ("role", "is_active")
+
+
+@admin.register(NewsletterSubscription)
+class NewsletterSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("email", "is_active", "consented_at")
+    list_filter = ("is_active",)
+    search_fields = ("email",)
+    readonly_fields = ("consented_at", "created_at", "updated_at")
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):

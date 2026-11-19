@@ -185,7 +185,7 @@ class SuperAdminOrderPackageLabelView(APIView):
         )
         response = HttpResponse(render_package_label(order), content_type="application/pdf")
         response["Content-Disposition"] = (
-            f'attachment; filename="LL26-{order.pk:04d}-package-label.pdf"'
+            f'attachment; filename="ODC-{order.pk:06d}-package-label.pdf"'
         )
         return response
 
@@ -216,6 +216,6 @@ class SuperAdminOrderInvoiceView(APIView):
             )
         response = HttpResponse(render_tax_invoice(order), content_type="application/pdf")
         response["Content-Disposition"] = (
-            f'attachment; filename="LL26-{order.pk:04d}-tax-invoice.pdf"'
+            f'attachment; filename="ODC-{order.pk:06d}-tax-invoice.pdf"'
         )
         return response
