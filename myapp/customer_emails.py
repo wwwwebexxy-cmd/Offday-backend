@@ -1,0 +1,937 @@
+"""Customer-facing registration, order, and paid-invoice emails."""
+
+import logging
+import mimetypes
+from decimal import Decimal, ROUND_HALF_UP
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.image import MIMEImage
+from html import escape
+from pathlib import Path
+
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
+from django.utils import timezone
+from django.utils.timezone import localtime
+
+from .invoice import render_tax_invoice
+from .models import Order, User
+from .sku import resolve_order_item_sku
+
+
+logger = logging.getLogger(__name__)
+
+EMAIL_LOGO_PATH = Path(__file__).with_name("assets") / "lifeline-medical-supplies-logo.jpeg"
+SOCIAL_LINKS = ()
+
+
+def _brand_value(name, fallback):
+    value = str(getattr(settings, name, fallback) or "").strip()
+    return value or fallback
+
+
+def _brand_name():
+    return _brand_value("BRAND_NAME", "Lifeline Medical Supplies")
+
+
+def _brand_short_name():
+    return _brand_value("BRAND_SHORT_NAME", "Lifeline")
+
+
+def _brand_support_email():
+    return _brand_value("BRAND_SUPPORT_EMAIL", "lifeandline@gmail.com")
+
+
+def _brand_phone():
+    return _brand_value("BRAND_PHONE", "+971 56 263 7379")
+
+
+def _brand_country():
+    return _brand_value("BRAND_COUNTRY", "United Arab Emirates")
+
+
+def _brand_tagline():
+    return _brand_value("BRAND_TAGLINE", "Medical Supplies")
+
+
+def _site_url(path=""):
+    return f"{str(getattr(settings, 'SITE_URL', '')).rstrip('/')}/{path.lstrip('/')}"
+
+
+def _name(user, address=None):
+    return (
+        (getattr(address, "full_name", "") if address else "")
+        or user.get_full_name()
+        or user.email
+        or "Customer"
+    ).strip()
+
+
+def _money(value):
+    return f"AED {value or 0:,.2f}"
+
+
+def _decimal(value):
+    return Decimal(str(value or "0")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+
+def _order_number(order):
+    return f"ORD-{order.pk:06d}"
+
+
+def _address_text(order):
+    address = order.address
+    if not address:
+        return "Address not provided"
+    values = (
+        address.address_line,
+        address.city,
+        address.emirate,
+        address.postal_code,
+        address.country,
+    )
+    return ", ".join(str(value).strip() for value in values if value)
+
+
+def _item_label(item):
+    details = []
+    if item.color:
+        details.append(item.color.name)
+    unit = item.variant_unit.unit if item.variant_unit_id and item.variant_unit.unit_id else item.unit
+    if unit:
+        unit_type = getattr(unit, "unit_type", None)
+        details.append(
+            f"{unit_type.name}: {unit.name}" if unit_type else unit.name
+        )
+    if item.variant_unit_id and item.variant_unit.grade:
+        details.append(f"Grade: {item.variant_unit.grade}")
+    return item.product.name + (f" ({' | '.join(details)})" if details else "")
+
+
+def _order_item_variant(item):
+    if item.variant_unit_id and item.variant_unit and item.variant_unit.variant_id:
+        return item.variant_unit.variant
+
+    variants = list(item.product.variants.all())
+    if item.color_id:
+        matching = next(
+            (variant for variant in variants if variant.color_id == item.color_id),
+            None,
+        )
+        if matching:
+            return matching
+    return next(
+        (variant for variant in variants if variant.color_id is None),
+        None,
+    ) or (variants[0] if variants else None)
+
+
+def _order_item_sku(item):
+    if item.variant_unit_id and item.variant_unit and item.variant_unit.sku:
+        return str(item.variant_unit.sku).strip()
+    variant = _order_item_variant(item)
+    if variant and variant.sku:
+        return str(variant.sku).strip()
+    return resolve_order_item_sku(item) or "-"
+
+
+def _order_item_image_path(item):
+    variant = _order_item_variant(item)
+    if not variant:
+        return None
+    images = list(variant.images.all())
+    image = next((candidate for candidate in images if candidate.is_primary), None)
+    image = image or (images[0] if images else None)
+    if not image or not image.image:
+        return None
+    try:
+        path = Path(image.image.path)
+    except (AttributeError, ValueError, OSError):
+        return None
+    return path if path.is_file() else None
+
+
+def _order_item_meta(item):
+    details = []
+    if item.color:
+        details.append(str(item.color.name).strip())
+    unit = item.variant_unit.unit if item.variant_unit_id and item.variant_unit.unit_id else item.unit
+    if unit:
+        unit_type = (
+            item.variant_unit.unit_type
+            if item.variant_unit_id and item.variant_unit.unit_type_id
+            else getattr(unit, "unit_type", None)
+        )
+        details.append(
+            f"{unit_type.name}: {unit.name}" if unit_type else str(unit.name)
+        )
+    if item.variant_unit_id and item.variant_unit.grade:
+        details.append(f"Grade: {item.variant_unit.grade}")
+    sku = _order_item_sku(item)
+    if sku != "-":
+        details.append(sku)
+    details.append(f"Qty {item.quantity}")
+    return " · ".join(details)
+
+
+def _order_arrival_text(order):
+    for item in order.items.all():
+        delivery = str(item.product.estimated_delivery_time or "").strip()
+        if delivery:
+            return delivery
+    return "To be confirmed"
+
+
+def _order_address_lines(order):
+    address = order.address
+    if not address:
+        return ["Address not provided"]
+    lines = []
+    if address.full_name:
+        lines.append(str(address.full_name).strip())
+    if address.address_line:
+        lines.append(str(address.address_line).strip())
+    locality = [address.city, address.emirate, address.postal_code, address.country]
+    locality_text = ", ".join(str(value).strip() for value in locality if value)
+    if locality_text:
+        lines.append(locality_text)
+    return lines or ["Address not provided"]
+
+
+def _order_payment_lines(order):
+    if order.payment_method == "WHATSAPP":
+        return ["WhatsApp order", "Payment to be confirmed"]
+    return ["Cash on Delivery", "Payment on delivery"]
+
+
+def _order_totals(order):
+    subtotal = _decimal(order.subtotal)
+    discount = _decimal(order.discount_amount)
+    shipping = _decimal(order.shipping_charge)
+    total = _decimal(order.total_amount)
+    discounted_subtotal = max(subtotal - discount, Decimal("0.00"))
+    included_vat = max(
+        total - shipping - discounted_subtotal,
+        Decimal("0.00"),
+    )
+    return {
+        "subtotal": _money(subtotal),
+        "discount": _money(discount),
+        "shipping": "FREE" if shipping == Decimal("0.00") else _money(shipping),
+        "vat": _money(included_vat),
+        "total": _money(total),
+        "has_discount": discount > Decimal("0.00"),
+    }
+
+
+def _email_invoice_number(order):
+    year = localtime(order.created_at).year if order.created_at else timezone.now().year
+    return f"LL-{year}-{order.pk:06d}"
+
+
+def _invoice_shipping_text(order):
+    for item in order.items.all():
+        delivery = str(item.product.estimated_delivery_time or "").strip()
+        if delivery:
+            return delivery
+    return "Delivery timing to be confirmed"
+
+
+def _invoice_payment_text(order):
+    if hasattr(order, "get_payment_method_display"):
+        return str(order.get_payment_method_display())
+    return str(order.payment_method or "Payment received")
+
+
+def _invoice_customer_lines(order):
+    lines = _order_address_lines(order)
+    phone = getattr(order.address, "phone", None) if order.address else None
+    if phone:
+        lines.append(str(phone).strip())
+    return lines
+
+
+def _invoice_status_steps(order):
+    status = str(order.status or "Pending")
+    packed = "Today" if status in {"Processing", "Shipped", "Delivered"} else "Next"
+    shipped = "On its way" if status in {"Shipped", "Delivered"} else "Next"
+    delivered = "Delivered" if status == "Delivered" else "Next"
+    ordered = localtime(order.created_at).strftime("%d %b") if order.created_at else "-"
+    return (
+        ("Ordered", ordered),
+        ("Packed", packed),
+        ("Shipped", shipped),
+        ("Delivered", delivered),
+    )
+
+
+def _email_shell(title, content):
+    brand_name = escape(_brand_name())
+    brand_tagline = escape(_brand_tagline())
+    support_email = escape(_brand_support_email())
+    return f"""
+    <div style=\"margin:0;background:#f8faf8;padding:28px 12px;font-family:Arial,Helvetica,sans-serif;color:#304a54\">
+      <table role=\"presentation\" style=\"width:100%;max-width:680px;margin:0 auto;background:#fff;border:1px solid #e2e8e4;border-radius:14px;border-collapse:separate;overflow:hidden\">
+        <tr><td style=\"padding:24px 30px;border-bottom:1px solid #e2e8e4\">
+          <div style=\"font-size:28px;font-weight:800;letter-spacing:-1px;color:#4f6973\">{brand_name}</div>
+          <div style=\"margin-top:3px;color:#ff9000;font-size:11px;font-style:italic\">{brand_tagline}</div>
+        </td></tr>
+        <tr><td style=\"padding:30px\"><h1 style=\"margin:0 0 18px;color:#111;font-size:26px\">{title}</h1>{content}</td></tr>
+        <tr><td style=\"padding:18px 30px;background:#fafcfa;border-top:1px solid #e2e8e4;color:#71858d;font-size:12px\">Need help? Email <a href=\"mailto:{support_email}\" style=\"color:#d97f00\">{support_email}</a>.</td></tr>
+      </table>
+    </div>
+    """
+
+
+def _text_and_html(
+    subject,
+    text_body,
+    html_body,
+    recipient,
+    *,
+    attachment=None,
+    inline_images=(),
+):
+    message = EmailMultiAlternatives(
+        subject=subject,
+        body=text_body,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+        to=[recipient],
+    )
+    message.attach_alternative(html_body, "text/html")
+    if attachment:
+        message.attach(*attachment)
+    for content_id, image_path in inline_images:
+        image_path = Path(image_path)
+        image_data = image_path.read_bytes()
+        try:
+            image = MIMEImage(image_data)
+        except TypeError:
+            mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+            maintype, subtype = mime_type.split("/", 1)
+            image = MIMEBase(maintype, subtype)
+            image.set_payload(image_data)
+            encoders.encode_base64(image)
+        image.add_header("Content-ID", f"<{content_id}>")
+        image.add_header("Content-Disposition", "inline", filename=image_path.name)
+        message.attach(image)
+    return message
+
+
+def _send(message):
+    try:
+        return bool(message.send(fail_silently=False))
+    except Exception:
+        logger.exception("Customer email delivery failed", extra={"recipient": message.to})
+        return False
+
+
+def _decimal_text(value):
+    return f"{value or 0:.2f}".rstrip("0").rstrip(".")
+
+
+def _welcome_bonus_scope(bonus):
+    if bonus.applicability_type == "CATEGORY":
+        scope = bonus.category.name if bonus.category_id else "Selected category"
+        if bonus.subcategory_id:
+            scope = f"{scope} / {bonus.subcategory.name}"
+        return scope
+
+    products = [product.name for product in bonus.products.all()]
+    return ", ".join(products) or "Selected products"
+
+
+def _welcome_bonus_copy(assignment):
+    bonus = assignment.welcome_bonus
+    if bonus.discount_type == "FIXED":
+        discount = f"{_money(bonus.fixed_amount)} off"
+    else:
+        discount = f"{_decimal_text(bonus.discount_percentage)}% off"
+    valid_until = localtime(bonus.end_date).strftime("%d %b %Y")
+    return discount, _welcome_bonus_scope(bonus), valid_until
+
+
+def _welcome_gift_html(assignments):
+    if not assignments:
+        return ""
+
+    entries = []
+    for assignment in assignments:
+        discount, scope, valid_until = _welcome_bonus_copy(assignment)
+        entries.append(
+            f"""
+            <div style=\"padding:12px 0;border-top:1px dashed #f0bd68\">
+              <div style=\"font-size:24px;line-height:1.15;color:#17364b;font-weight:800;letter-spacing:.3px\">{escape(assignment.code)}</div>
+              <div style=\"margin-top:5px;color:#304a54;font-size:15px;line-height:1.45\"><strong>{escape(discount)}</strong> on your first eligible order.</div>
+              <div style=\"margin-top:4px;color:#71858d;font-size:12px;line-height:1.45\">Valid on: {escape(scope)}</div>
+              <div style=\"margin-top:3px;color:#71858d;font-size:12px;line-height:1.45\">Valid until: {escape(valid_until)}</div>
+            </div>
+            """
+        )
+    return f"""
+      <div style=\"margin:26px 0;padding:18px 20px;border:1px dashed #e79a27;border-radius:8px;background:#fffaf0\">
+        <div style=\"margin-bottom:4px;font-size:12px;color:#a46a13;font-weight:800;letter-spacing:1.2px\">YOUR WELCOME GIFT</div>
+        {''.join(entries)}
+        <div style=\"margin-top:8px;color:#71858d;font-size:12px;line-height:1.45\">Use the code at checkout while the campaign is active.</div>
+      </div>
+    """
+
+
+def _welcome_gift_text(assignments):
+    if not assignments:
+        return ""
+    lines = ["\nYour welcome gift:"]
+    for assignment in assignments:
+        discount, scope, valid_until = _welcome_bonus_copy(assignment)
+        lines.append(
+            f"{assignment.code} — {discount} on your first eligible order. "
+            f"Valid on: {scope}. Valid until: {valid_until}."
+        )
+    lines.append("Use the code at checkout while the campaign is active.\n")
+    return "\n".join(lines)
+
+
+def _social_links_html():
+    brand_name = escape(_brand_name())
+    return "".join(
+        f"<a href=\"{escape(url)}\" aria-label=\"{brand_name} on {escape(label)}\" style=\"display:inline-block;margin:0 3px;text-decoration:none\"><span style=\"display:inline-block;width:24px;height:24px;line-height:24px;border-radius:50%;background:{color};color:#ffffff;font-size:12px;font-weight:800;text-align:center\">{escape(label)}</span></a>"
+        for label, url, color in SOCIAL_LINKS
+    )
+
+
+def _registration_email_html(name, gift_html):
+    site_url = escape(_site_url("/"))
+    brand_name = escape(_brand_name())
+    brand_support_email = escape(_brand_support_email())
+    brand_phone = escape(_brand_phone())
+    brand_country = escape(_brand_country())
+    return f"""
+    <!doctype html>
+    <html lang=\"en\">
+      <head>
+        <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <title>Welcome to {brand_name}</title>
+        <style>
+          @media screen and (max-width: 620px) {{
+            .life-line-email-shell {{ padding: 10px !important; }}
+            .life-line-email-card {{ width: 100% !important; }}
+            .life-line-email-body {{ padding: 28px 20px !important; }}
+            .life-line-feature-cell {{ display: block !important; width: 100% !important; padding: 8px 0 !important; }}
+          }}
+        </style>
+      </head>
+      <body style=\"margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54\">
+        <div class=\"life-line-email-shell\" style=\"padding:28px 12px;background:#f4f0e6\">
+          <table role=\"presentation\" class=\"life-line-email-card\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden\">
+            <tr>
+              <td style=\"padding:28px 30px 18px;text-align:right\">
+                <a href=\"{site_url}\" style=\"text-decoration:none\"><img src=\"cid:life-line-logo\" width=\"165\" alt=\"{brand_name} logo\" style=\"display:inline-block;width:165px;max-width:70%;height:auto;border:0\"></a>
+              </td>
+            </tr>
+            <tr>
+              <td class=\"life-line-email-body\" style=\"padding:8px 50px 34px\">
+                <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">
+                  <tr><td style=\"font-size:12px;line-height:1.4;color:#ff9000;font-weight:800;letter-spacing:.8px\">WELCOME TO <span style=\"color:#38586a\">{brand_name}</span> <a href=\"{escape(_site_url('/login'))}\" style=\"display:inline-block;margin-left:8px;padding:4px 8px;border:1px solid #f0c276;border-radius:12px;color:#a46a13;font-size:10px;text-decoration:none;letter-spacing:0\">Login to your account</a></td></tr>
+                  <tr><td style=\"padding-top:26px;font-size:28px;line-height:1.15;color:#17364b;font-weight:800\">One last step, {escape(name)}.</td></tr>
+                  <tr><td style=\"padding-top:14px;font-size:15px;line-height:1.65;color:#61717b\">Thanks for creating your {brand_name} account. Your account is active and ready to shop quality medical supplies.</td></tr>
+                  <tr><td style=\"padding-top:22px\"><a href=\"{site_url}\" style=\"display:inline-block;padding:13px 18px;border-radius:5px;background:#38586a;color:#ffffff;font-size:12px;font-weight:800;letter-spacing:.5px;text-decoration:none\">START SHOPPING</a></td></tr>
+                  {f'<tr><td>{gift_html}</td></tr>' if gift_html else ''}
+                  <tr><td style=\"padding-top:20px;font-size:12px;line-height:1.55;color:#71858d\">You can manage your account, orders and saved products any time from My Account.</td></tr>
+                  <tr><td style=\"padding-top:28px\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>
+                    <td class=\"life-line-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-right:12px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Fast delivery</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">Tracked shipping straight to your door.</span></td>
+                    <td class=\"life-line-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding:0 6px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Easy returns</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">Changed your mind? No stress.</span></td>
+                    <td class=\"life-line-feature-cell\" width=\"33.33%\" valign=\"top\" style=\"padding-left:12px\"><span style=\"display:block;width:22px;height:22px;background:#ff9000\"></span><strong style=\"display:block;padding-top:9px;font-size:13px;color:#304a54\">Member offers</strong><span style=\"display:block;padding-top:4px;font-size:11px;line-height:1.45;color:#71858d\">First to know about new drops.</span></td>
+                  </tr></table></td></tr>
+                </table>
+              </td>
+            </tr>
+            <tr><td style=\"padding:0 50px\"><div style=\"height:1px;background:#e8eceb\"></div></td></tr>
+            <tr><td style=\"padding:22px 50px 26px;text-align:center;font-size:11px;line-height:1.55;color:#71858d\">Didn’t you create this account? You can safely ignore this email — nothing will happen without your confirmation.</td></tr>
+            <tr><td style=\"padding:22px 30px 24px;background:#38586a;text-align:center\"><div style=\"color:#ff9000;font-size:13px;font-weight:800;letter-spacing:1.3px\">THANK YOU FOR SHOPPING</div><div style=\"padding-top:14px;font-size:11px\"><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Help Centre</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/contact'))}\" style=\"color:#ffffff;text-decoration:none\">Returns</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/profile'))}\" style=\"color:#ffffff;text-decoration:none\">My Account</a><span style=\"color:#ffb65a;padding:0 5px\">|</span><a href=\"{escape(_site_url('/about'))}\" style=\"color:#ffffff;text-decoration:none\">Terms</a></div><div style=\"padding-top:12px;color:#d8e0e3;font-size:11px\">{brand_name} · {brand_country} · <a href=\"{site_url}\" style=\"color:#ffffff;text-decoration:none\">Visit our website</a></div><div style=\"padding-top:6px;color:#d8e0e3;font-size:11px\">Questions? Email <a href=\"mailto:{brand_support_email}\" style=\"color:#ffffff;text-decoration:none\">{brand_support_email}</a> or call {brand_phone}</div><div style=\"padding-top:13px;color:#b9c8ce;font-size:10px\">You’re receiving this email because an account was created at {brand_name}.</div></td></tr>
+          </table>
+          <div style=\"padding:16px 0 4px;text-align:center\">{_social_links_html()}</div>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def send_registration_email(user_id):
+    """Send the welcome email once, after a customer account is created."""
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=user_id)
+        if user.registration_email_sent_at or not user.email:
+            return False
+
+        now = timezone.now()
+        assignments = list(
+            user.welcome_bonus_assignments.select_related("welcome_bonus")
+            .select_related("welcome_bonus__category", "welcome_bonus__subcategory")
+            .prefetch_related("welcome_bonus__products")
+            .filter(status__in=("AVAILABLE", "CLAIMED"))
+            .filter(
+                welcome_bonus__is_active=True,
+                welcome_bonus__archived_at__isnull=True,
+                welcome_bonus__start_date__lte=now,
+                welcome_bonus__end_date__gte=now,
+            )
+            .order_by("created_at", "id")
+        )
+        name = _name(user)
+        gift_html = _welcome_gift_html(assignments)
+        gift_text = _welcome_gift_text(assignments)
+        subject = f"Welcome to {_brand_name()} — your account is ready"
+        text_body = (
+            f"Welcome to {_brand_name()}, {name}.\n\n"
+            "Your account is active and ready to shop quality medical supplies.\n"
+            f"{gift_text}\n"
+            f"Start shopping: {_site_url('/')}\n"
+        )
+        html_body = _registration_email_html(name, gift_html)
+        message = _text_and_html(
+            subject,
+            text_body,
+            html_body,
+            user.email,
+            inline_images=(("life-line-logo", EMAIL_LOGO_PATH),),
+        )
+        if not _send(message):
+            return False
+        user.registration_email_sent_at = timezone.now()
+        user.save(update_fields=("registration_email_sent_at",))
+        return True
+
+
+def _get_order(order_id):
+    return (
+        Order.objects.select_for_update()
+        .select_related("user", "address")
+        .prefetch_related(
+            "items__product",
+            "items__product__variants__images",
+            "items__color",
+            "items__unit__unit_type",
+            "items__variant_unit__unit",
+            "items__variant_unit__unit_type",
+            "items__variant_unit__variant__images",
+        )
+        .get(pk=order_id)
+    )
+
+
+def _order_item_rows_html(items, image_cids):
+    rows = []
+    for index, item in enumerate(items):
+        product_name = escape(str(item.product.name))
+        metadata = escape(_order_item_meta(item))
+        image_cid = image_cids.get(index)
+        if image_cid:
+            visual = (
+                f'<img src="cid:{escape(image_cid)}" width="58" height="58" '
+                f'alt="{product_name}" style="display:block;width:58px;height:58px;object-fit:contain;border:0">'
+            )
+        else:
+            visual = (
+                '<div aria-hidden="true" style="width:58px;height:58px;background:#f4f0e6;'
+                'border-radius:4px"></div>'
+            )
+        rows.append(
+            f'''<tr>
+              <td style="padding:10px 8px 10px 0;border-bottom:1px solid #e7e0d3;width:68px;vertical-align:middle">{visual}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid #e7e0d3;vertical-align:middle">
+                <div style="font-size:15px;line-height:1.35;color:#304a54;font-weight:700">{product_name}</div>
+                <div style="padding-top:3px;font-size:11px;line-height:1.45;color:#71858d">{metadata}</div>
+              </td>
+              <td style="padding:10px 0;text-align:right;border-bottom:1px solid #e7e0d3;white-space:nowrap;vertical-align:middle;font-size:14px;color:#304a54">{escape(_money(item.total_price))}</td>
+            </tr>'''
+        )
+    return "".join(rows) or (
+        '<tr><td colspan="3" style="padding:14px 0;border-bottom:1px solid #e7e0d3;'
+        'font-size:13px;color:#71858d">Your order is being prepared.</td></tr>'
+    )
+
+
+def _order_confirmation_email_html(
+    order,
+    name,
+    number,
+    items,
+    image_cids,
+):
+    site_url = escape(_site_url("/"))
+    order_url = escape(_site_url("/myorders"))
+    brand_name = escape(_brand_name())
+    brand_support_email = escape(_brand_support_email())
+    brand_phone = escape(_brand_phone())
+    brand_country = escape(_brand_country())
+    arrival = escape(_order_arrival_text(order))
+    totals = _order_totals(order)
+    address_lines = "<br>".join(escape(line) for line in _order_address_lines(order))
+    payment_lines = "<br>".join(escape(line) for line in _order_payment_lines(order))
+    discount_row = ""
+    if totals["has_discount"]:
+        discount_row = f'''
+          <tr><td style="padding:6px 0;text-align:left;color:#71858d">Discount</td><td style="padding:6px 0;text-align:right;color:#ff9000">- {escape(totals["discount"])}</td></tr>'''
+
+    return f'''
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Order confirmed - {escape(number)}</title>
+        <style>
+          @media screen and (max-width: 620px) {{
+            .life-line-email-shell {{ padding: 10px !important; }}
+            .life-line-email-card {{ width: 100% !important; }}
+            .life-line-email-body {{ padding: 34px 20px 28px !important; }}
+            .life-line-email-header {{ padding: 24px 20px 16px !important; }}
+            .life-line-meta-cell {{ display: block !important; width: 100% !important; border-right: 0 !important; border-bottom: 1px solid #e7e0d3 !important; }}
+            .life-line-meta-cell:last-child {{ border-bottom: 0 !important; }}
+            .life-line-info-cell {{ display: block !important; width: 100% !important; padding: 12px 0 0 !important; }}
+            .life-line-info-cell + .life-line-info-cell {{ padding-top: 22px !important; }}
+            .life-line-items-table {{ font-size: 13px !important; }}
+          }}
+        </style>
+      </head>
+      <body style="margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54">
+        <div class="life-line-email-shell" style="padding:28px 12px;background:#f4f0e6">
+          <table role="presentation" class="life-line-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden">
+            <tr><td class="life-line-email-header" style="padding:28px 30px 18px;text-align:right;background:#fffaf0">
+              <a href="{site_url}" style="text-decoration:none"><img src="cid:life-line-logo" width="165" alt="{brand_name} logo" style="display:inline-block;width:165px;max-width:70%;height:auto;border:0"></a>
+            </td></tr>
+            <tr><td class="life-line-email-body" style="padding:66px 48px 58px">
+              <div style="font-size:12px;line-height:1.4;color:#ff9000;font-weight:800;letter-spacing:4px">ORDER CONFIRMED <span style="display:inline-block;width:21px;height:21px;line-height:21px;margin-left:3px;border-radius:50%;background:#ff9000;color:#17364b;text-align:center;font-size:14px;letter-spacing:0">✓</span></div>
+              <h1 style="margin:62px 0 10px;font-size:28px;line-height:1.15;color:#38586a;letter-spacing:-.4px">Thank you, {escape(name)}.</h1>
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#71858d">We&apos;ve received your order and we&apos;re getting it ready. You&apos;ll get another email with tracking details as soon as it ships.</p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:2px solid #ff9000;background:#fffaf0">
+                <tr>
+                  <td class="life-line-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #e7e0d3"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ORDER NO.</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">#{escape(number)}</div></td>
+                  <td class="life-line-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center;border-right:1px solid #e7e0d3"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ORDER DATE</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">{escape(localtime(order.created_at).strftime("%d %b %Y"))}</div></td>
+                  <td class="life-line-meta-cell" width="33.33%" style="padding:17px 8px;text-align:center"><div style="font-size:10px;line-height:1.4;color:#71858d;font-weight:800;letter-spacing:2px">ARRIVES</div><div style="padding-top:7px;font-size:15px;color:#38586a;font-weight:800">{arrival}</div></td>
+                </tr>
+              </table>
+
+              <div style="padding-top:44px;font-size:12px;line-height:1.4;color:#38586a;font-weight:800;letter-spacing:3px;border-bottom:2px solid #38586a;padding-bottom:7px">YOUR ITEMS</div>
+              <table role="presentation" class="life-line-items-table" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">{_order_item_rows_html(items, image_cids)}</table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:340px;margin:24px 0 0 auto;font-size:14px">
+                <tr><td style="padding:6px 0;text-align:left;color:#71858d">Subtotal</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["subtotal"])}</td></tr>
+                {discount_row}
+                <tr><td style="padding:6px 0;text-align:left;color:#71858d">Shipping</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["shipping"])}</td></tr>
+                <tr><td style="padding:6px 0;text-align:left;color:#71858d">VAT (5%)</td><td style="padding:6px 0;text-align:right;color:#304a54">{escape(totals["vat"])}</td></tr>
+                <tr><td colspan="2" style="padding-top:4px;border-bottom:1px solid #e7e0d3"></td></tr>
+                <tr><td style="padding:18px 0 0;text-align:left;color:#38586a;font-size:12px;font-weight:800;letter-spacing:3px">TOTAL</td><td style="padding:14px 0 0;text-align:right;color:#38586a;font-size:25px;font-weight:800">{escape(totals["total"])}</td></tr>
+              </table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:38px">
+                <tr>
+                  <td class="life-line-info-cell" width="50%" valign="top" style="padding-right:14px"><div style="font-size:12px;color:#38586a;font-weight:800;letter-spacing:3px">SHIPPING TO</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#304a54">{address_lines}</div></td>
+                  <td class="life-line-info-cell" width="50%" valign="top" style="padding-left:14px"><div style="font-size:12px;color:#38586a;font-weight:800;letter-spacing:3px">PAYMENT</div><div style="padding-top:10px;font-size:14px;line-height:1.65;color:#304a54">{payment_lines}</div></td>
+                </tr>
+              </table>
+
+              <div style="padding-top:48px;text-align:center"><a href="{order_url}" style="display:inline-block;padding:11px 15px;border-radius:18px;background:#7891a0;color:#ffffff;font-size:12px;font-weight:800;text-decoration:none">VIEW MY ORDER <span style="font-size:18px;line-height:10px;vertical-align:-1px">→</span></a></div>
+            </td></tr>
+            <tr><td style="padding:40px 30px 44px;background:#38586a;text-align:center"><div style="color:#ff9000;font-size:13px;font-weight:800;letter-spacing:3px">THANK YOU FOR SHOPPING</div><div style="padding-top:20px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/profile'))}" style="color:#ffffff;text-decoration:none">My Account</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/about'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:18px;color:#d8e0e3;font-size:11px">{brand_name} · {brand_country} · <a href="{site_url}" style="color:#ffffff;text-decoration:none">Visit our website</a></div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">Questions? Email <a href="mailto:{brand_support_email}" style="color:#ffffff;text-decoration:none">{brand_support_email}</a> or call {brand_phone}</div><div style="padding-top:14px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at {brand_name}.</div></td></tr>
+          </table>
+          <div style="padding:16px 0 4px;text-align:center">{_social_links_html()}</div>
+        </div>
+      </body>
+    </html>
+    '''
+
+
+def _order_confirmation_email_text(order, name, number, items):
+    totals = _order_totals(order)
+    lines = [
+        f"Order confirmed - {number}",
+        "",
+        f"{_brand_name()} order confirmation",
+        f"Thank you, {name}.",
+        "We've received your order and we're getting it ready.",
+        "",
+        "Your items:",
+    ]
+    for item in items:
+        lines.append(
+            f"- {item.product.name} / {_order_item_meta(item)} / {_money(item.total_price)}"
+        )
+    lines.extend(
+        [
+            "",
+            f"Subtotal: {totals['subtotal']}",
+        ]
+    )
+    if totals["has_discount"]:
+        lines.append(f"Discount: - {totals['discount']}")
+    lines.extend(
+        [
+            f"Shipping: {totals['shipping']}",
+            f"VAT (5%): {totals['vat']}",
+            f"Total: {totals['total']}",
+            "",
+            f"Shipping to: {_address_text(order)}",
+            f"Need help? {_brand_support_email()} | {_brand_phone()}",
+            "",
+            f"View your order: {_site_url('/myorders')}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _invoice_item_rows_html(items):
+    rows = []
+    for item in items:
+        product_name = escape(str(item.product.name))
+        metadata = escape(_order_item_meta(item))
+        rows.append(
+            f'''<tr>
+              <td style="padding:13px 12px;border-bottom:1px solid #e7e0d3;vertical-align:middle"><div style="font-size:14px;line-height:1.35;color:#304a54;font-weight:700">{product_name}</div><div style="padding-top:3px;font-size:11px;line-height:1.45;color:#71858d">{metadata}</div></td>
+              <td style="padding:13px 8px;text-align:center;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54">{item.quantity}</td>
+              <td style="padding:13px 8px;text-align:right;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54;white-space:nowrap">{escape(_money(item.price))}</td>
+              <td style="padding:13px 12px 13px 8px;text-align:right;border-bottom:1px solid #e7e0d3;vertical-align:middle;font-size:13px;color:#304a54;font-weight:700;white-space:nowrap">{escape(_money(item.total_price))}</td>
+            </tr>'''
+        )
+    return "".join(rows) or (
+        '<tr><td colspan="4" style="padding:14px 12px;border-bottom:1px solid #e7e0d3;'
+        'font-size:13px;color:#71858d">Your order items are being prepared.</td></tr>'
+    )
+
+
+def _invoice_item_rows_text(items):
+    if not items:
+        return ["Your order items are being prepared."]
+    return [
+        f"{item.product.name} / {_order_item_meta(item)} / "
+        f"Qty {item.quantity} / {_money(item.price)} / {_money(item.total_price)}"
+        for item in items
+    ]
+
+
+def _invoice_email_html(order, name, invoice_number, items):
+    site_url = escape(_site_url("/"))
+    invoice_url = escape(_site_url("/myorders"))
+    brand_name = escape(_brand_name())
+    brand_support_email = escape(_brand_support_email())
+    brand_phone = escape(_brand_phone())
+    brand_country = escape(_brand_country())
+    invoice_date = localtime(order.created_at).strftime("%d %b %Y") if order.created_at else "-"
+    totals = _order_totals(order)
+    customer_lines = "<br>".join(escape(line) for line in _invoice_customer_lines(order))
+    payment_text = escape(_invoice_payment_text(order))
+    shipping_text = escape(_invoice_shipping_text(order))
+    seller_vat_value = str(getattr(settings, "INVOICE_SELLER_VAT_NUMBER", "") or "").strip()
+    seller_vat = escape(seller_vat_value) if seller_vat_value else "Not configured"
+    discount_label = "Discount"
+    discount_row = ""
+    if totals["has_discount"]:
+        discount_row = f'''
+          <tr><td style="padding:6px 0;text-align:left;color:#71858d">{discount_label}</td><td style="padding:6px 0;text-align:right;color:#ff9000">- {escape(totals["discount"])}</td></tr>'''
+    steps = _invoice_status_steps(order)
+    step_cells = []
+    for index, (label, detail) in enumerate(steps):
+        active_color = "#ff9000" if index == 0 or (index == 1 and order.status in {"Processing", "Shipped", "Delivered"}) or (index == 2 and order.status in {"Shipped", "Delivered"}) or (index == 3 and order.status == "Delivered") else "#e7e0d3"
+        step_cells.append(
+            f'''<td width="25%" style="padding:0 3px;text-align:center;vertical-align:top"><div style="height:5px;background:{active_color}"></div><div style="padding-top:10px;font-size:11px;line-height:1.35;color:#304a54">{escape(label)}</div><div style="font-size:10px;line-height:1.35;color:#71858d">{escape(detail)}</div></td>'''
+        )
+    return f'''
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Paid invoice - {escape(invoice_number)}</title>
+        <style>
+          @media screen and (max-width: 620px) {{
+            .life-line-email-shell {{ padding: 10px !important; }}
+            .life-line-email-card {{ width: 100% !important; }}
+            .invoice-header {{ padding: 24px 20px 18px !important; }}
+            .invoice-band {{ padding: 23px 20px !important; }}
+            .invoice-body {{ padding: 30px 20px 28px !important; }}
+            .invoice-half {{ display: block !important; width: 100% !important; padding: 10px 0 !important; }}
+            .invoice-summary {{ margin-top: 18px !important; }}
+            .invoice-table {{ font-size: 12px !important; }}
+            .invoice-table th, .invoice-table td {{ padding-left: 5px !important; padding-right: 5px !important; }}
+            .invoice-actions a {{ display: block !important; margin: 8px auto !important; width: 120px !important; }}
+            .invoice-footer {{ padding: 34px 20px 38px !important; }}
+          }}
+        </style>
+      </head>
+      <body style="margin:0;padding:0;background:#f4f0e6;font-family:Arial,Helvetica,sans-serif;color:#304a54">
+        <div class="life-line-email-shell" style="padding:28px 12px;background:#f4f0e6">
+          <table role="presentation" class="life-line-email-card" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;margin:0 auto;background:#ffffff;border-top:4px solid #ff9000;border-radius:8px;overflow:hidden">
+            <tr><td class="invoice-header" style="padding:28px 30px 22px;text-align:left;background:#fffaf0">
+              <a href="{site_url}" style="text-decoration:none"><img src="cid:life-line-logo" width="185" alt="{brand_name} logo" style="display:block;width:185px;max-width:80%;height:auto;border:0"></a>
+            </td></tr>
+            <tr><td class="invoice-band" style="padding:24px 36px;background:#38586a;color:#ffffff">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+                <td width="58%" valign="middle"><div style="font-family:Georgia,serif;font-size:28px;line-height:1.1;letter-spacing:2px;color:#ffffff">INVOICE</div><div style="padding-top:8px;font-size:12px;letter-spacing:1px;color:#d8e0e3">#{escape(invoice_number)}</div></td>
+                <td width="42%" valign="middle" style="text-align:right"><div style="display:inline-block;padding:8px 11px;border-radius:9px;background:#c8d5df;color:#38586a;font-size:22px;line-height:1;font-weight:800;letter-spacing:1px"><span style="display:inline-block;width:25px;height:25px;line-height:25px;margin-right:4px;border-radius:50%;background:#00a51a;color:#ffffff;text-align:center;font-size:18px;vertical-align:2px">✓</span>PAID</div><div style="padding-top:9px;font-size:11px;color:#d8e0e3">Issued {escape(invoice_date)}</div></td>
+              </tr></table>
+            </td></tr>
+            <tr><td class="invoice-body" style="padding:50px 38px 34px">
+               <h1 style="margin:0 0 9px;font-size:24px;line-height:1.2;color:#38586a;letter-spacing:-.3px">Hi {escape(name)}, your order is being prepared.</h1>
+              <p style="margin:0;font-size:15px;line-height:1.6;color:#71858d">Thank you for shopping with {brand_name}. Your payment has been received and your order is being prepared. Your invoice is below - a PDF copy is attached for your records.</p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px"><tr>
+                <td class="invoice-half" width="50%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>BILLED TO</div><div style="padding-top:15px;font-size:13px;line-height:1.6;color:#304a54">{customer_lines}</div></td>
+                <td class="invoice-half" width="50%" valign="top" style="padding-left:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>ORDER DETAILS</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;font-size:13px;line-height:1.75"><tr><td style="color:#71858d">Order no.</td><td style="text-align:right;color:#304a54;font-weight:700">#{escape(invoice_number)}</td></tr><tr><td style="color:#71858d">Order date</td><td style="text-align:right;color:#304a54">{escape(invoice_date)}</td></tr><tr><td style="color:#71858d">Payment</td><td style="text-align:right;color:#304a54">{payment_text}</td></tr><tr><td style="color:#71858d">Shipping</td><td style="text-align:right;color:#304a54">{shipping_text}</td></tr></table></td>
+              </tr></table>
+
+              <table role="presentation" class="invoice-table" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-collapse:collapse;font-size:13px">
+                <thead><tr style="background:#38586a;color:#ffffff"><th style="padding:11px 12px;text-align:left;font-size:10px;letter-spacing:2px">ITEM</th><th style="padding:11px 8px;text-align:center;font-size:10px;letter-spacing:2px">QTY</th><th style="padding:11px 8px;text-align:right;font-size:10px;letter-spacing:2px">PRICE</th><th style="padding:11px 12px 11px 8px;text-align:right;font-size:10px;letter-spacing:2px">TOTAL</th></tr></thead>
+                <tbody>{_invoice_item_rows_html(items)}</tbody>
+              </table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px"><tr>
+                <td class="invoice-half" width="49%" valign="top" style="padding-right:18px"><div style="font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px">NOTE</div><div style="padding-top:11px;font-size:12px;line-height:1.6;color:#71858d">Prices in UAE Dirhams (AED).<br>Payment received for this order.<br>Keep this email for your records.</div></td>
+                <td class="invoice-half invoice-summary" width="51%" valign="top" style="padding-left:18px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px"><tr><td style="padding:5px 0;color:#71858d">Subtotal</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["subtotal"].replace("AED ", ""))}</td></tr>{discount_row}<tr><td style="padding:5px 0;color:#71858d">Shipping</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["shipping"].replace("AED ", ""))}</td></tr><tr><td style="padding:5px 0;color:#71858d">VAT (5%)</td><td style="padding:5px 0;text-align:right;color:#304a54">{escape(totals["vat"].replace("AED ", ""))}</td></tr></table></td>
+              </tr></table>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:25px;border-radius:8px;background:#c8d5df"><tr><td style="padding:23px 19px;color:#38586a;font-size:15px;letter-spacing:.5px">TOTAL PAID</td><td style="padding:18px 19px;text-align:right;color:#38586a;white-space:nowrap"><span style="font-size:13px">AED </span><strong style="font-size:28px;letter-spacing:-.5px">{escape(totals["total"].replace("AED ", ""))}</strong></td></tr></table>
+
+              <div style="padding-top:32px;font-size:11px;color:#38586a;font-weight:800;letter-spacing:2px"><span style="display:inline-block;width:10px;height:19px;margin-right:8px;background:#ff9000;vertical-align:-5px"></span>WHERE&apos;S MY ORDER?</div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:17px"><tr>{"".join(step_cells)}</tr></table>
+
+              <div style="margin-top:34px;border-top:1px dashed #f0bd68"></div>
+              <div class="invoice-actions" style="padding-top:28px;text-align:center"><a href="{site_url}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#c8d5df;color:#38586a;font-size:12px;text-decoration:none">Buy More</a><a href="{escape(_site_url('/profile'))}" style="display:inline-block;margin:0 2px;padding:11px 18px;border-radius:8px;background:#c8d5df;color:#38586a;font-size:12px;text-decoration:none">My Account</a></div>
+               <div style="padding-top:25px;text-align:center;font-family:Georgia,serif;font-size:11px;color:#9aa7ae">Need a hand? Reply to this email or write to <a href="mailto:{brand_support_email}" style="color:#ff9000;text-decoration:none">{brand_support_email}</a> or call {brand_phone}</div>
+            </td></tr>
+            <tr><td class="invoice-footer" style="padding:39px 30px 44px;background:#38586a;text-align:center"><div style="color:#ff9000;font-size:13px;font-weight:800;letter-spacing:3px">THANK YOU FOR SHOPPING</div><div style="padding-top:21px;font-size:12px"><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Help Centre</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/contact'))}" style="color:#ffffff;text-decoration:none">Returns</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{invoice_url}" style="color:#ffffff;text-decoration:none">Track Order</a><span style="color:#ffb65a;padding:0 5px">|</span><a href="{escape(_site_url('/about'))}" style="color:#ffffff;text-decoration:none">Terms</a></div><div style="padding-top:19px;color:#d8e0e3;font-size:11px">{brand_name} · {brand_country}</div><div style="padding-top:7px;color:#d8e0e3;font-size:11px">{f'TRN {seller_vat} · ' if seller_vat_value else ''}<a href="{site_url}" style="color:#ffffff;text-decoration:none">Visit our website</a></div><div style="padding-top:8px;color:#b9c8ce;font-size:10px">This is a computer-generated invoice and does not require a signature.</div><div style="padding-top:6px;color:#b9c8ce;font-size:10px">You&apos;re receiving this email because you placed an order at {brand_name}.</div></td></tr>
+          </table>
+          <div style="padding:16px 0 4px;text-align:center">{_social_links_html()}</div>
+        </div>
+      </body>
+    </html>
+    '''
+
+
+def _invoice_email_text(order, name, invoice_number, items):
+    totals = _order_totals(order)
+    invoice_date = localtime(order.created_at).strftime("%d %b %Y") if order.created_at else "-"
+    lines = [
+        f"Paid invoice - {invoice_number}",
+        "",
+        f"Hi {name}, your order is being prepared.",
+        f"Thank you for shopping with {_brand_name()}. Your payment has been received and your order is being prepared.",
+        "Your invoice is included below and attached as a PDF for your records.",
+        "",
+        f"Order date: {invoice_date}",
+        f"Payment: {_invoice_payment_text(order)}",
+        "",
+        "Items:",
+        *_invoice_item_rows_text(items),
+        "",
+        f"Subtotal: {totals['subtotal']}",
+    ]
+    if totals["has_discount"]:
+        lines.append(f"Discount: - {totals['discount']}")
+    lines.extend(
+        [
+            f"Shipping: {totals['shipping']}",
+            f"VAT (5%): {totals['vat']}",
+            f"Total paid: {totals['total']}",
+            "",
+            f"Need help? {_brand_support_email()} | {_brand_phone()}",
+            f"View your order: {_site_url('/myorders')}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def send_order_confirmation_email(order_id):
+    """Send the pending COD/WhatsApp order confirmation once."""
+    with transaction.atomic():
+        order = _get_order(order_id)
+        if (
+            order.order_confirmation_email_sent_at
+            or not order.user.email
+            or order.payment_method not in {"COD", "WHATSAPP"}
+        ):
+            return False
+
+        name = _name(order.user, order.address)
+        number = _order_number(order)
+        items = list(order.items.all())
+        image_cids = {}
+        inline_images = [("life-line-logo", EMAIL_LOGO_PATH)]
+        for index, item in enumerate(items):
+            image_path = _order_item_image_path(item)
+            if image_path:
+                content_id = f"order-item-{index}"
+                image_cids[index] = content_id
+                inline_images.append((content_id, image_path))
+        text_body = _order_confirmation_email_text(order, name, number, items)
+        html_body = _order_confirmation_email_html(
+            order,
+            name,
+            number,
+            items,
+            image_cids,
+        )
+        message = _text_and_html(
+            f"Order confirmed - {number}",
+            text_body,
+            html_body,
+            order.user.email,
+            inline_images=inline_images,
+        )
+        if not _send(message):
+            return False
+        order.order_confirmation_email_sent_at = timezone.now()
+        order.save(update_fields=("order_confirmation_email_sent_at", "updated_at"))
+        return True
+
+
+def send_paid_invoice_email(order_id):
+    """Send a paid-order email with the generated tax invoice PDF once."""
+    with transaction.atomic():
+        order = _get_order(order_id)
+        if (
+            order.paid_invoice_email_sent_at
+            or order.payment_status != "Paid"
+            or not order.user.email
+        ):
+            return False
+
+        name = _name(order.user, order.address)
+        number = _email_invoice_number(order)
+        items = list(order.items.all())
+        pdf = render_tax_invoice(order)
+        filename = f"LIFELINE-{_order_number(order)}-invoice.pdf"
+        text_body = _invoice_email_text(order, name, number, items)
+        html_body = _invoice_email_html(
+            order,
+            name,
+            number,
+            items,
+        )
+        message = _text_and_html(
+            f"Paid invoice - {number}",
+            text_body,
+            html_body,
+            order.user.email,
+            attachment=(filename, pdf, "application/pdf"),
+            inline_images=(("life-line-logo", EMAIL_LOGO_PATH),),
+        )
+        if not _send(message):
+            return False
+        order.paid_invoice_email_sent_at = timezone.now()
+        order.save(update_fields=("paid_invoice_email_sent_at", "updated_at"))
+        return True
+
+
+def send_customer_order_email(order_id):
+    """Select the one customer email appropriate for the order state."""
+    order = Order.objects.only("payment_method", "payment_status").get(pk=order_id)
+    if order.payment_status == "Paid":
+        return send_paid_invoice_email(order_id)
+    if order.payment_method in {"COD", "WHATSAPP"}:
+        return send_order_confirmation_email(order_id)
+    return False
